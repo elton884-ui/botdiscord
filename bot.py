@@ -1,7 +1,26 @@
+import os
+import random
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
-import random
 
+# --- SERVIDOR WEB PARA MANTER NO PLANO GRATUITO DO RENDER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Roipau esta rodando!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+# Inicia o servidor web em segundo plano
+Thread(target=run_web_server, daemon=True).start()
+
+# --- CÓDIGO DO BOT DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
@@ -57,14 +76,11 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fec
                 for i, p in enumerate(vagas, start=1):
                     linhas.append(f"{emoji} `{pos} {i}:` {p or ''}")
 
-        # inline=False coloca um time por linha com espaço amplo
         embed.add_field(name=f"⚽ TIME {idx}", value="\n".join(linhas), inline=False)
         
-        # Adiciona uma linha em branco invisível entre os times para separar
         if idx < qtd_times:
             embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
-    # Linha divisória antes dos reservas
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
     if reservas:
@@ -265,5 +281,6 @@ async def on_raw_reaction_add(payload):
     )
     await msg.edit(embed=novo_embed)
 
-# Cole o seu Token entre as aspas abaixo:
-bot.run("MTU2Njg1MDczNDgxNTk2OTMwMA.GFlnmi.elsoQBQ-VyapHmJuBgSZaic_ORr86ncReSiEc8")
+# Substitui pela tua chave do Discord:
+TOKEN = os.environ.get("DISCORD_TOKEN", "SEU_TOKEN_DO_DISCORD_AQUI")
+bot.run(TOKEN)
