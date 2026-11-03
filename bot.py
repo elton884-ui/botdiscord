@@ -242,7 +242,7 @@ class ListaButtons(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         msg_id = interaction.message.id
         if msg_id not in listas_ativas:
-            await interaction.response.send_message("⚠️ Lista inativa na memória do bot. Crie uma nova com !criarlista.", ephemeral=True)
+            await interaction.response.send_message("⚠️ Esta lista expirou na memória do bot (após o restart). Crie uma nova com !criarlista.", ephemeral=True)
             return False
 
         dados = listas_ativas[msg_id]
@@ -254,10 +254,23 @@ class ListaButtons(discord.ui.View):
         user_mention = interaction.user.mention
         user_id = interaction.user.id
 
+        # REGRA DE CAPITÃES: Impede ser capitão dos dois times ao mesmo tempo
         if custom_id == "btn_cap_roipau":
-            dados["capitaes"][0] = user_mention
+            if dados["capitaes"][0] == user_mention:
+                dados["capitaes"][0] = None  # Remove se clicar novamente
+            else:
+                if dados["capitaes"][1] == user_mention:
+                    dados["capitaes"][1] = None  # Remove do outro time se já for capitão lá
+                dados["capitaes"][0] = user_mention
+
         elif custom_id == "btn_cap_roipaufc":
-            dados["capitaes"][1] = user_mention
+            if dados["capitaes"][1] == user_mention:
+                dados["capitaes"][1] = None  # Remove se clicar novamente
+            else:
+                if dados["capitaes"][0] == user_mention:
+                    dados["capitaes"][0] = None  # Remove do outro time se já for capitão lá
+                dados["capitaes"][1] = user_mention
+
         elif custom_id == "btn_sair":
             remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], user_id)
         elif custom_id.startswith("btn_pos_"):
@@ -320,31 +333,15 @@ async def criar_lista(ctx, *, args):
         }
 
     except Exception:
-        msg_err = await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
-        try:
-            await msg_err.delete(delay=5)
-        except Exception:
-            pass
+        await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
 
 @bot.command(name="remover")
-async def remover(ctx, *, alvo: str = None):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
+async def remover(ctx, member: discord.Member = None):
+    if not member and ctx.message.mentions:
+        member = ctx.message.mentions[0]
 
-    target_id = None
-    if ctx.message.mentions:
-        target_id = ctx.message.mentions[0].id
-    elif alvo:
-        target_id = extrair_id(alvo)
-
-    if not target_id:
-        msg_err = await ctx.send("⚠️ Identifique o jogador! Exemplo: `!remover @Jogador`")
-        try:
-            await msg_err.delete(delay=5)
-        except Exception:
-            pass
+    if not member:
+        await ctx.send("⚠️ **Uso correto:** Digite `!remover @Jogador` (marcando o membro com @).")
         return
 
     msg_id = None
@@ -357,27 +354,20 @@ async def remover(ctx, *, alvo: str = None):
                 break
 
     if not msg_id or msg_id not in listas_ativas:
-        msg_err = await ctx.send("⚠️ Nenhuma lista ativa na memória do bot. Crie uma nova com `!criarlista` para testar.")
-        try:
-            await msg_err.delete(delay=6)
-        except Exception:
-            pass
+        await ctx.send("⚠️ **Nenhuma lista ativa encontrada na memória!** Crie uma nova lista com `!criarlista`.")
         return
 
     dados = listas_ativas[msg_id]
+    user_id = member.id
 
-    esta_no_time = jogador_no_time_principal(dados["times"], target_id)
-    esta_nos_reservas = any(extrair_id(r['user']) == target_id for r in dados["reservas"])
+    esta_no_time = jogador_no_time_principal(dados["times"], user_id)
+    esta_nos_reservas = any(extrair_id(r['user']) == user_id for r in dados["reservas"])
 
     if not esta_no_time and not esta_nos_reservas:
-        msg_err = await ctx.send(f"⚠️ O jogador <@{target_id}> não está nesta lista.")
-        try:
-            await msg_err.delete(delay=5)
-        except Exception:
-            pass
+        await ctx.send(f"⚠️ O jogador {member.mention} não está escalado nesta lista.")
         return
 
-    remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], target_id)
+    remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], user_id)
 
     channel = bot.get_channel(dados["channel_id"])
     msg = await channel.fetch_message(msg_id)
@@ -393,7 +383,12 @@ async def remover(ctx, *, alvo: str = None):
     )
     await msg.edit(embed=novo_embed, view=dados.get("view"))
 
-    msg_confirm = await ctx.send(f"🗑️ O jogador <@{target_id}> foi removido da lista!")
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg_confirm = await ctx.send(f"🗑️ O jogador {member.mention} foi removido da lista!")
     try:
         await msg_confirm.delete(delay=4)
     except Exception:
@@ -413,22 +408,14 @@ async def atualizar_lista(ctx, nova_qtd: int):
             break
 
     if not msg_id:
-        msg_err = await ctx.send("⚠️ Nenhuma lista aberta encontrada para atualizar!")
-        try:
-            await msg_err.delete(delay=5)
-        except Exception:
-            pass
+        await ctx.send("⚠️ Nenhuma lista aberta encontrada para atualizar!")
         return
 
     dados = listas_ativas[msg_id]
     qtd_antiga = dados["qtd_times"]
 
     if nova_qtd <= qtd_antiga:
-        msg_err = await ctx.send(f"⚠️ A nova quantidade de times ({nova_qtd}) deve ser maior que a atual ({qtd_antiga})!")
-        try:
-            await msg_err.delete(delay=5)
-        except Exception:
-            pass
+        await ctx.send(f"⚠️ A nova quantidade de times ({nova_qtd}) deve ser maior que a atual ({qtd_antiga})!")
         return
 
     dados["qtd_times"] = nova_qtd
@@ -498,25 +485,25 @@ async def fechar_lista(ctx):
                 break
 
     if not msg_id or msg_id not in listas_ativas:
-        msg_err = await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
-        try:
-            await msg_err.delete(delay=5)
-        except Exception:
-            pass
+        await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
         return
 
     dados = listas_ativas[msg_id]
     dados["fechada"] = True
 
+    # SORTEIO ALEATÓRIO DE CAPITÃES (Se não tiver capitão definido manualmente)
     for i in range(min(2, dados["qtd_times"])):
         if not dados["capitaes"].get(i):
-            for pos, vagas in dados["times"][i].items():
-                for jogador in vagas:
-                    if jogador:
-                        dados["capitaes"][i] = jogador
-                        break
-                if dados["capitaes"].get(i):
-                    break
+            jogadores_do_time = [j for vagas in dados["times"][i].values() for j in vagas if j]
+            outro_cap = dados["capitaes"].get(1 if i == 0 else 0)
+            
+            # Filtra para não escolher como capitão quem já for capitão do outro time
+            candidatos = [j for j in jogadores_do_time if j != outro_cap]
+            
+            if candidatos:
+                dados["capitaes"][i] = random.choice(candidatos)
+            elif jogadores_do_time:
+                dados["capitaes"][i] = random.choice(jogadores_do_time)
 
     channel = bot.get_channel(dados["channel_id"])
     try:
@@ -554,10 +541,4 @@ async def fechar_lista(ctx):
                 mensagem_escalacao += f"🔊 **Entrar na Call:** {link_call}\n"
             mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
 
-        await ctx.send(mensagem_escalacao)
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao atualizar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-bot.run(TOKEN)
+        await ctx.send
