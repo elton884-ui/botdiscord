@@ -119,6 +119,13 @@ def jogador_no_time_principal(times_data, target_id):
                     return True
     return False
 
+def jogador_no_time_especifico(time_data, target_id):
+    for pos in time_data:
+        for j in time_data[pos]:
+            if j and extrair_id(j) == target_id:
+                return True
+    return False
+
 def promover_reserva(times_data, reservas, posicao):
     for idx, res in enumerate(reservas):
         if posicao in res['posicoes']:
@@ -257,27 +264,35 @@ class ListaButtons(discord.ui.View):
         cap0_id = extrair_id(dados["capitaes"].get(0))
         cap1_id = extrair_id(dados["capitaes"].get(1))
 
-        # BLOQUEIO DE CAPITÃO EXISTENTE
+        # VALIDAÇÃO DE CAPITÃO: Exige estar escalado no time correspondente
         if custom_id == "btn_cap_roipau":
+            if not jogador_no_time_especifico(dados["times"][0], user_id):
+                await interaction.response.send_message("⚠️ Você precisa estar escalado no time **RoiPau** para ser o capitão dele!", ephemeral=True)
+                return False
+
             if cap0_id == user_id:
-                dados["capitaes"][0] = None  # Se for o próprio capitão clicando, ele sai da vaga
+                dados["capitaes"][0] = None
             elif cap0_id is not None:
                 await interaction.response.send_message("⚠️ O RoiPau já tem um capitão definido! Ele precisa clicar no botão para sair antes que outro assuma.", ephemeral=True)
                 return False
             else:
                 if cap1_id == user_id:
-                    dados["capitaes"][1] = None  # Se já era capitão no time 2, libera a vaga de lá
+                    dados["capitaes"][1] = None
                 dados["capitaes"][0] = user_mention
 
         elif custom_id == "btn_cap_roipaufc":
+            if len(dados["times"]) < 2 or not jogador_no_time_especifico(dados["times"][1], user_id):
+                await interaction.response.send_message("⚠️ Você precisa estar escalado no time **RoiPau FC** para ser o capitão dele!", ephemeral=True)
+                return False
+
             if cap1_id == user_id:
-                dados["capitaes"][1] = None  # Se for o próprio capitão clicando, ele sai da vaga
+                dados["capitaes"][1] = None
             elif cap1_id is not None:
                 await interaction.response.send_message("⚠️ O RoiPau FC já tem um capitão definido! Ele precisa clicar no botão para sair antes que outro assuma.", ephemeral=True)
                 return False
             else:
                 if cap0_id == user_id:
-                    dados["capitaes"][0] = None  # Se já era capitão no time 1, libera a vaga de lá
+                    dados["capitaes"][0] = None
                 dados["capitaes"][1] = user_mention
 
         elif custom_id == "btn_sair":
@@ -369,10 +384,14 @@ async def remover(ctx, member: discord.Member = None):
     dados = listas_ativas[msg_id]
     user_id = member.id
 
+    cap0_id = extrair_id(dados["capitaes"].get(0))
+    cap1_id = extrair_id(dados["capitaes"].get(1))
+
     esta_no_time = jogador_no_time_principal(dados["times"], user_id)
     esta_nos_reservas = any(extrair_id(r['user']) == user_id for r in dados["reservas"])
+    esta_de_capitao = (cap0_id == user_id) or (cap1_id == user_id)
 
-    if not esta_no_time and not esta_nos_reservas:
+    if not esta_no_time and not esta_nos_reservas and not esta_de_capitao:
         await ctx.send(f"⚠️ O jogador {member.mention} não está escalado nesta lista.")
         return
 
@@ -397,7 +416,7 @@ async def remover(ctx, member: discord.Member = None):
     except Exception:
         pass
 
-    msg_confirm = await ctx.send(f"🗑️ O jogador {member.mention} foi removido da lista!")
+    msg_confirm = await ctx.send(f"🗑️ O jogador {member.mention} foi removido da escalação e do cargo de capitão!")
     try:
         await msg_confirm.delete(delay=4)
     except Exception:
@@ -500,7 +519,6 @@ async def fechar_lista(ctx):
     dados = listas_ativas[msg_id]
     dados["fechada"] = True
 
-    # SORTEIO ALEATÓRIO DE CAPITÃES SE NÃO HOVER DEFINIÇÃO
     for i in range(min(2, dados["qtd_times"])):
         if not dados["capitaes"].get(i):
             jogadores_do_time = [j for vagas in dados["times"][i].values() for j in vagas if j]
