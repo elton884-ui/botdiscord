@@ -254,21 +254,24 @@ class ListaButtons(discord.ui.View):
         user_mention = interaction.user.mention
         user_id = interaction.user.id
 
-        # REGRA DE CAPITÃES: Impede ser capitão dos dois times ao mesmo tempo
+        cap0_id = extrair_id(dados["capitaes"].get(0))
+        cap1_id = extrair_id(dados["capitaes"].get(1))
+
+        # TRAVA DEFINITIVA DE CAPITÃO ÚNICO POR ID
         if custom_id == "btn_cap_roipau":
-            if dados["capitaes"][0] == user_mention:
-                dados["capitaes"][0] = None  # Remove se clicar novamente
+            if cap0_id == user_id:
+                dados["capitaes"][0] = None  # Clicou no próprio botão: remove capitão
             else:
-                if dados["capitaes"][1] == user_mention:
-                    dados["capitaes"][1] = None  # Remove do outro time se já for capitão lá
+                if cap1_id == user_id:
+                    dados["capitaes"][1] = None  # Remove do Time 2 se já era capitão lá
                 dados["capitaes"][0] = user_mention
 
         elif custom_id == "btn_cap_roipaufc":
-            if dados["capitaes"][1] == user_mention:
-                dados["capitaes"][1] = None  # Remove se clicar novamente
+            if cap1_id == user_id:
+                dados["capitaes"][1] = None  # Clicou no próprio botão: remove capitão
             else:
-                if dados["capitaes"][0] == user_mention:
-                    dados["capitaes"][0] = None  # Remove do outro time se já for capitão lá
+                if cap0_id == user_id:
+                    dados["capitaes"][0] = None  # Remove do Time 1 se já era capitão lá
                 dados["capitaes"][1] = user_mention
 
         elif custom_id == "btn_sair":
@@ -390,155 +393,3 @@ async def remover(ctx, member: discord.Member = None):
 
     msg_confirm = await ctx.send(f"🗑️ O jogador {member.mention} foi removido da lista!")
     try:
-        await msg_confirm.delete(delay=4)
-    except Exception:
-        pass
-
-@bot.command(name="atualizarlista")
-async def atualizar_lista(ctx, nova_qtd: int):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    msg_id = None
-    for mid, dados in reversed(list(listas_ativas.items())):
-        if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-            msg_id = mid
-            break
-
-    if not msg_id:
-        await ctx.send("⚠️ Nenhuma lista aberta encontrada para atualizar!")
-        return
-
-    dados = listas_ativas[msg_id]
-    qtd_antiga = dados["qtd_times"]
-
-    if nova_qtd <= qtd_antiga:
-        await ctx.send(f"⚠️ A nova quantidade de times ({nova_qtd}) deve ser maior que a atual ({qtd_antiga})!")
-        return
-
-    dados["qtd_times"] = nova_qtd
-    config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
-
-    for _ in range(nova_qtd - qtd_antiga):
-        t_dict = {}
-        for pos, qtd in config_formacao.items():
-            t_dict[pos] = [None] * qtd
-        dados["times"].append(t_dict)
-
-    reservas_copia = list(dados["reservas"])
-    for res in reservas_copia:
-        user_mention = res["user"]
-        user_id = extrair_id(user_mention)
-        colocado = False
-        for pos in res["posicoes"]:
-            for idx_t in range(qtd_antiga, nova_qtd):
-                time = dados["times"][idx_t]
-                if pos in time and None in time[pos]:
-                    for i in range(len(time[pos])):
-                        if time[pos][i] is None:
-                            time[pos][i] = user_mention
-                            colocado = True
-                            break
-                if colocado:
-                    break
-            if colocado:
-                dados["reservas"] = [r for r in dados["reservas"] if extrair_id(r["user"]) != user_id]
-                break
-
-    channel = bot.get_channel(dados["channel_id"])
-    msg = await channel.fetch_message(msg_id)
-
-    novo_embed = gerar_embed(
-        dados["titulo"], 
-        dados["esquema"], 
-        dados["categoria"], 
-        dados["qtd_times"], 
-        dados["times"], 
-        dados["reservas"],
-        dados["capitaes"]
-    )
-    await msg.edit(embed=novo_embed, view=dados.get("view"))
-
-    msg_confirm = await ctx.send(f"⚡ **Lista atualizada para {nova_qtd} times!** Reservas realocados.")
-    try:
-        await msg_confirm.delete(delay=4)
-    except Exception:
-        pass
-
-@bot.command(name="fecharlista")
-async def fechar_lista(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    msg_id = None
-    
-    if ctx.message.reference:
-        msg_id = ctx.message.reference.message_id
-    else:
-        for mid, dados in reversed(list(listas_ativas.items())):
-            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
-        return
-
-    dados = listas_ativas[msg_id]
-    dados["fechada"] = True
-
-    # SORTEIO ALEATÓRIO DE CAPITÃES (Se não tiver capitão definido manualmente)
-    for i in range(min(2, dados["qtd_times"])):
-        if not dados["capitaes"].get(i):
-            jogadores_do_time = [j for vagas in dados["times"][i].values() for j in vagas if j]
-            outro_cap = dados["capitaes"].get(1 if i == 0 else 0)
-            
-            # Filtra para não escolher como capitão quem já for capitão do outro time
-            candidatos = [j for j in jogadores_do_time if j != outro_cap]
-            
-            if candidatos:
-                dados["capitaes"][i] = random.choice(candidatos)
-            elif jogadores_do_time:
-                dados["capitaes"][i] = random.choice(jogadores_do_time)
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        novo_embed = gerar_embed(
-            dados["titulo"], 
-            dados["esquema"], 
-            dados["categoria"], 
-            dados["qtd_times"], 
-            dados["times"], 
-            dados["reservas"],
-            dados["capitaes"],
-            fechada=True
-        )
-        await msg.edit(embed=novo_embed, view=None)
-
-        mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
-
-        for idx, time in enumerate(dados["times"]):
-            nome_time = NOMES_TIMES[idx] if idx < len(NOMES_TIMES) else f"Time {idx+1}"
-            link_call = LINKS_CALL[idx] if idx < len(LINKS_CALL) else ""
-            capitao = dados["capitaes"].get(idx) or "*Nenhum capitão definido*"
-
-            jogadores = []
-            for pos, vagas in time.items():
-                for j in vagas:
-                    if j:
-                        jogadores.append(j)
-
-            mencoes = " ".join(jogadores) if jogadores else "*Nenhum jogador escalado*"
-
-            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
-            mensagem_escalacao += f"👥 **Jogadores:** {mencoes}\n"
-            if link_call:
-                mensagem_escalacao += f"🔊 **Entrar na Call:** {link_call}\n"
-            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-
-        await ctx.send
