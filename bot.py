@@ -356,4 +356,147 @@ async def atualizar_lista(ctx, nova_qtd: int):
         msg_err = await ctx.send("⚠️ Nenhuma lista aberta encontrada para atualizar!")
         try:
             await msg_err.delete(delay=5)
-        except Exception
+        except Exception:
+            pass
+        return
+
+    dados = listas_ativas[msg_id]
+    qtd_antiga = dados["qtd_times"]
+
+    if nova_qtd <= qtd_antiga:
+        msg_err = await ctx.send(f"⚠️ A nova quantidade de times ({nova_qtd}) deve ser maior que a atual ({qtd_antiga})!")
+        try:
+            await msg_err.delete(delay=5)
+        except Exception:
+            pass
+        return
+
+    dados["qtd_times"] = nova_qtd
+    config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
+
+    for _ in range(nova_qtd - qtd_antiga):
+        t_dict = {}
+        for pos, qtd in config_formacao.items():
+            t_dict[pos] = [None] * qtd
+        dados["times"].append(t_dict)
+
+    reservas_copia = list(dados["reservas"])
+    for res in reservas_copia:
+        user_mention = res["user"]
+        colocado = False
+        for pos in res["posicoes"]:
+            for idx_t in range(qtd_antiga, nova_qtd):
+                time = dados["times"][idx_t]
+                if pos in time and None in time[pos]:
+                    for i in range(len(time[pos])):
+                        if time[pos][i] is None:
+                            time[pos][i] = user_mention
+                            colocado = True
+                            break
+                if colocado:
+                    break
+            if colocado:
+                dados["reservas"] = [r for r in dados["reservas"] if r["user"] != user_mention]
+                break
+
+    channel = bot.get_channel(dados["channel_id"])
+    msg = await channel.fetch_message(msg_id)
+
+    novo_embed = gerar_embed(
+        dados["titulo"], 
+        dados["esquema"], 
+        dados["categoria"], 
+        dados["qtd_times"], 
+        dados["times"], 
+        dados["reservas"],
+        dados["capitaes"]
+    )
+    await msg.edit(embed=novo_embed, view=dados.get("view"))
+
+    msg_confirm = await ctx.send(f"⚡ **Lista atualizada para {nova_qtd} times!** Reservas realocados.")
+    try:
+        await msg_confirm.delete(delay=4)
+    except Exception:
+        pass
+
+@bot.command(name="fecharlista")
+async def fechar_lista(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg_id = None
+    
+    if ctx.message.reference:
+        msg_id = ctx.message.reference.message_id
+    else:
+        for mid, dados in reversed(list(listas_ativas.items())):
+            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
+                msg_id = mid
+                break
+
+    if not msg_id or msg_id not in listas_ativas:
+        msg_err = await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
+        try:
+            await msg_err.delete(delay=5)
+        except Exception:
+            pass
+        return
+
+    dados = listas_ativas[msg_id]
+    dados["fechada"] = True
+
+    for i in range(min(2, dados["qtd_times"])):
+        if not dados["capitaes"].get(i):
+            for pos, vagas in dados["times"][i].items():
+                for jogador in vagas:
+                    if jogador:
+                        dados["capitaes"][i] = jogador
+                        break
+                if dados["capitaes"].get(i):
+                    break
+
+    channel = bot.get_channel(dados["channel_id"])
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed(
+            dados["titulo"], 
+            dados["esquema"], 
+            dados["categoria"], 
+            dados["qtd_times"], 
+            dados["times"], 
+            dados["reservas"],
+            dados["capitaes"],
+            fechada=True
+        )
+        await msg.edit(embed=novo_embed, view=None)
+
+        mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
+
+        for idx, time in enumerate(dados["times"]):
+            nome_time = NOMES_TIMES[idx] if idx < len(NOMES_TIMES) else f"Time {idx+1}"
+            link_call = LINKS_CALL[idx] if idx < len(LINKS_CALL) else ""
+            capitao = dados["capitaes"].get(idx) or "*Nenhum capitão definido*"
+
+            jogadores = []
+            for pos, vagas in time.items():
+                for j in vagas:
+                    if j:
+                        jogadores.append(j)
+
+            mencoes = " ".join(jogadores) if jogadores else "*Nenhum jogador escalado*"
+
+            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
+            mensagem_escalacao += f"👥 **Jogadores:** {mencoes}\n"
+            if link_call:
+                mensagem_escalacao += f"🔊 **Entrar na Call:** {link_call}\n"
+            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+
+        await ctx.send(mensagem_escalacao)
+
+    except Exception as e:
+        await ctx.send(f"⚠️ Erro ao atualizar lista: {e}")
+
+TOKEN = os.environ.get("DISCORD_TOKEN")
+bot.run(TOKEN)
