@@ -5,7 +5,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
 
-# --- SERVIDOR WEB PARA MANTER NO PLANO GRATUITO DO RENDER ---
+# --- SERVIDOR WEB PARA O RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -17,10 +17,9 @@ def run_web_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# Inicia o servidor web em segundo plano
 Thread(target=run_web_server, daemon=True).start()
 
-# --- CÓDIGO DO BOT DISCORD ---
+# --- CONFIGURAÇÃO DO BOT DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
@@ -57,6 +56,13 @@ POS_EMOJIS = {
     "ATA": "🎯"
 }
 
+# Nomes dos times e links de Call
+NOMES_TIMES = ["RoiPau", "RoiPau FC"]
+LINKS_CALL = [
+    "https://discord.com/channels/1468243764412809462/1524800890094223490",  # RoiPau
+    "https://discord.com/channels/1468243764412809462/1553042214517735515"   # RoiPau FC
+]
+
 def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fechada=False):
     cor = discord.Color.red() if fechada else discord.Color.green()
     
@@ -67,6 +73,7 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fec
     )
 
     for idx, time in enumerate(times_data, start=1):
+        nome_exibicao = NOMES_TIMES[idx-1] if idx-1 < len(NOMES_TIMES) else f"TIME {idx}"
         linhas = []
         for pos, vagas in time.items():
             emoji = POS_EMOJIS.get(pos, "🔹")
@@ -76,7 +83,7 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fec
                 for i, p in enumerate(vagas, start=1):
                     linhas.append(f"{emoji} `{pos} {i}:` {p or ''}")
 
-        embed.add_field(name=f"⚽ TIME {idx}", value="\n".join(linhas), inline=False)
+        embed.add_field(name=f"⚽ {nome_exibicao.upper()}", value="\n".join(linhas), inline=False)
         
         if idx < qtd_times:
             embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
@@ -237,7 +244,30 @@ async def fechar_lista(ctx):
         )
         await msg.edit(embed=novo_embed)
         await msg.clear_reactions()
-        await ctx.send("🔒 **Lista fechada com sucesso!**")
+
+        # CONSTRUÇÃO DA MENSAGEM COM MENÇÃO E LINKS DE CALL
+        mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
+
+        for idx, time in enumerate(dados["times"]):
+            nome_time = NOMES_TIMES[idx] if idx < len(NOMES_TIMES) else f"Time {idx+1}"
+            link_call = LINKS_CALL[idx] if idx < len(LINKS_CALL) else ""
+
+            jogadores = []
+            for pos, vagas in time.items():
+                for j in vagas:
+                    if j:
+                        jogadores.append(j)
+
+            mencoes = " ".join(jogadores) if jogadores else "*Nenhum jogador escalado*"
+
+            mensagem_escalacao += f"🛡️ **{nome_time.upper()}**\n"
+            mensagem_escalacao += f"👥 **Jogadores:** {mencoes}\n"
+            if link_call:
+                mensagem_escalacao += f"🔊 **Entrar na Call:** {link_call}\n"
+            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+
+        await ctx.send(mensagem_escalacao)
+
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao atualizar lista: {e}")
 
@@ -281,6 +311,5 @@ async def on_raw_reaction_add(payload):
     )
     await msg.edit(embed=novo_embed)
 
-# Substitui pela tua chave do Discord:
-TOKEN = os.environ.get("DISCORD_TOKEN", "SEU_TOKEN_DO_DISCORD_AQUI")
+TOKEN = os.environ.get("DISCORD_TOKEN")
 bot.run(TOKEN)
