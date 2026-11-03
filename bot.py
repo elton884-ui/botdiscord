@@ -56,14 +56,15 @@ POS_EMOJIS = {
     "ATA": "🎯"
 }
 
-# Nomes dos times e links de Call
-NOMES_TIMES = ["RoiPau", "RoiPau FC"]
+NOMES_TIMES = ["RoiPau", "RoiPau FC", "RoiPau 3", "RoiPau 4"]
 LINKS_CALL = [
     "https://discord.com/channels/1468243764412809462/1524800890094223490",  # RoiPau
-    "https://discord.com/channels/1468243764412809462/1553042214517735515"   # RoiPau FC
+    "https://discord.com/channels/1468243764412809462/1553042214517735515",  # RoiPau FC
+    "",
+    ""
 ]
 
-def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fechada=False):
+def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, capitaes, fechada=False):
     cor = discord.Color.red() if fechada else discord.Color.green()
     
     embed = discord.Embed(
@@ -71,6 +72,13 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fec
         description=f"⚽ **Formação:** `{esquema}` | **Foco:** `{categoria}`\n👥 **Times:** `{qtd_times}`\n\u200b",
         color=cor
     )
+
+    # SECÇÃO DOS CAPITÃES NO TOPO
+    cap1 = capitaes.get(0) or "*A definir (reaja com 👑)*"
+    cap2 = capitaes.get(1) or "*A definir (reaja com 🎗️)*"
+    val_capitaes = f"👑 **RoiPau:** {cap1}\n🎗️ **RoiPau FC:** {cap2}"
+    embed.add_field(name="⭐ CAPITÃES DOS TIMES", value=val_capitaes, inline=False)
+    embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
     for idx, time in enumerate(times_data, start=1):
         nome_exibicao = NOMES_TIMES[idx-1] if idx-1 < len(NOMES_TIMES) else f"TIME {idx}"
@@ -104,7 +112,7 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, fec
     if fechada:
         embed.set_footer(text="🔒 LISTA FECHADA • As inscrições e alterações foram encerradas.")
     else:
-        embed.set_footer(text="Ao sair um titular, o 1º reserva da posição assume automaticamente! | ❌ Sair")
+        embed.set_footer(text="Reaja com 👑/🎗️ para Capitão | Emojis de Posição para Jogar | ❌ Sair")
         
     return embed
 
@@ -128,7 +136,7 @@ def promover_reserva(times_data, reservas, posicao):
                             return True
     return False
 
-def remover_jogador(times_data, reservas, mention):
+def remover_jogador(times_data, reservas, capitaes, mention):
     posicoes_liberadas = []
     for time in times_data:
         for pos in time:
@@ -138,6 +146,10 @@ def remover_jogador(times_data, reservas, mention):
                     posicoes_liberadas.append(pos)
 
     reservas[:] = [r for r in reservas if r['user'] != mention]
+
+    for k, v in list(capitaes.items()):
+        if v == mention:
+            capitaes[k] = None
 
     for pos_liberada in posicoes_liberadas:
         promover_reserva(times_data, reservas, pos_liberada)
@@ -188,8 +200,9 @@ async def criar_lista(ctx, *, args):
             times_data.append(t_dict)
 
         reservas = []
+        capitaes = {0: None, 1: None}
 
-        embed = gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas)
+        embed = gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, capitaes)
         msg = await ctx.send(embed=embed)
 
         listas_ativas[msg.id] = {
@@ -199,9 +212,14 @@ async def criar_lista(ctx, *, args):
             "qtd_times": qtd_times,
             "times": times_data,
             "reservas": reservas,
+            "capitaes": capitaes,
             "channel_id": ctx.channel.id,
             "fechada": False
         }
+
+        # Emojis dos capitães
+        await msg.add_reaction("👑")
+        await msg.add_reaction("🎗️")
 
         for pos in config_formacao.keys():
             if pos in POS_EMOJIS:
@@ -210,6 +228,70 @@ async def criar_lista(ctx, *, args):
 
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
+
+@bot.command(name="atualizarlista")
+async def atualizar_lista(ctx, nova_qtd: int):
+    msg_id = None
+    for mid, dados in reversed(list(listas_ativas.items())):
+        if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
+            msg_id = mid
+            break
+
+    if not msg_id:
+        await ctx.send("⚠️ Nenhuma lista aberta encontrada para atualizar!")
+        return
+
+    dados = listas_ativas[msg_id]
+    qtd_antiga = dados["qtd_times"]
+
+    if nova_qtd <= qtd_antiga:
+        await ctx.send(f"⚠️ A nova quantidade de times ({nova_qtd}) deve ser maior que a atual ({qtd_antiga})!")
+        return
+
+    dados["qtd_times"] = nova_qtd
+    config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
+
+    # Adiciona novos times
+    for _ in range(nova_qtd - qtd_antiga):
+        t_dict = {}
+        for pos, qtd in config_formacao.items():
+            t_dict[pos] = [None] * qtd
+        dados["times"].append(t_dict)
+
+    # Realoca reservas para os novos times
+    reservas_copia = list(dados["reservas"])
+    for res in reservas_copia:
+        user_mention = res["user"]
+        colocado = False
+        for pos in res["posicoes"]:
+            for idx_t in range(qtd_antiga, nova_qtd):
+                time = dados["times"][idx_t]
+                if pos in time and None in time[pos]:
+                    for i in range(len(time[pos])):
+                        if time[pos][i] is None:
+                            time[pos][i] = user_mention
+                            colocado = True
+                            break
+                if colocado:
+                    break
+            if colocado:
+                dados["reservas"] = [r for r in dados["reservas"] if r["user"] != user_mention]
+                break
+
+    channel = bot.get_channel(dados["channel_id"])
+    msg = await channel.fetch_message(msg_id)
+
+    novo_embed = gerar_embed(
+        dados["titulo"], 
+        dados["esquema"], 
+        dados["categoria"], 
+        dados["qtd_times"], 
+        dados["times"], 
+        dados["reservas"],
+        dados["capitaes"]
+    )
+    await msg.edit(embed=novo_embed)
+    await ctx.send(f"⚡ **Lista atualizada de {qtd_antiga} para {nova_qtd} times!** Os reservas foram escalados nos novos times.")
 
 @bot.command(name="fecharlista")
 async def fechar_lista(ctx):
@@ -230,6 +312,17 @@ async def fechar_lista(ctx):
     dados = listas_ativas[msg_id]
     dados["fechada"] = True
 
+    # ESCOLHA AUTOMÁTICA DE CAPITÃES SE NINGUÉM SE CANDIDATOU
+    for i in range(min(2, dados["qtd_times"])):
+        if not dados["capitaes"].get(i):
+            for pos, vagas in dados["times"][i].items():
+                for jogador in vagas:
+                    if jogador:
+                        dados["capitaes"][i] = jogador
+                        break
+                if dados["capitaes"].get(i):
+                    break
+
     channel = bot.get_channel(dados["channel_id"])
     try:
         msg = await channel.fetch_message(msg_id)
@@ -240,17 +333,18 @@ async def fechar_lista(ctx):
             dados["qtd_times"], 
             dados["times"], 
             dados["reservas"],
+            dados["capitaes"],
             fechada=True
         )
         await msg.edit(embed=novo_embed)
         await msg.clear_reactions()
 
-        # CONSTRUÇÃO DA MENSAGEM COM MENÇÃO E LINKS DE CALL
         mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
 
         for idx, time in enumerate(dados["times"]):
             nome_time = NOMES_TIMES[idx] if idx < len(NOMES_TIMES) else f"Time {idx+1}"
             link_call = LINKS_CALL[idx] if idx < len(LINKS_CALL) else ""
+            capitao = dados["capitaes"].get(idx) or "*Nenhum capitão definido*"
 
             jogadores = []
             for pos, vagas in time.items():
@@ -260,7 +354,7 @@ async def fechar_lista(ctx):
 
             mencoes = " ".join(jogadores) if jogadores else "*Nenhum jogador escalado*"
 
-            mensagem_escalacao += f"🛡️ **{nome_time.upper()}**\n"
+            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
             mensagem_escalacao += f"👥 **Jogadores:** {mencoes}\n"
             if link_call:
                 mensagem_escalacao += f"🔊 **Entrar na Call:** {link_call}\n"
@@ -295,8 +389,12 @@ async def on_raw_reaction_add(payload):
 
     emoji_str = str(payload.emoji)
 
-    if emoji_str == "❌":
-        remover_jogador(dados["times"], dados["reservas"], user.mention)
+    if emoji_str == "👑":
+        dados["capitaes"][0] = user.mention
+    elif emoji_str == "🎗️":
+        dados["capitaes"][1] = user.mention
+    elif emoji_str == "❌":
+        remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], user.mention)
     elif emoji_str in EMOJIS_POSICAO:
         pos_key = EMOJIS_POSICAO[emoji_str]
         processar_posicao(dados["times"], dados["reservas"], pos_key, user.mention)
@@ -307,7 +405,8 @@ async def on_raw_reaction_add(payload):
         dados["categoria"], 
         dados["qtd_times"], 
         dados["times"], 
-        dados["reservas"]
+        dados["reservas"],
+        dados["capitaes"]
     )
     await msg.edit(embed=novo_embed)
 
