@@ -73,7 +73,6 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, cap
         color=cor
     )
 
-    # SECÇÃO DOS CAPITÃES NO TOPO
     cap1 = capitaes.get(0) or "*A definir (reaja com 👑)*"
     cap2 = capitaes.get(1) or "*A definir (reaja com 🎗️)*"
     val_capitaes = f"👑 **RoiPau:** {cap1}\n🎗️ **RoiPau FC:** {cap2}"
@@ -217,7 +216,6 @@ async def criar_lista(ctx, *, args):
             "fechada": False
         }
 
-        # Emojis dos capitães
         await msg.add_reaction("👑")
         await msg.add_reaction("🎗️")
 
@@ -228,6 +226,49 @@ async def criar_lista(ctx, *, args):
 
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
+
+@bot.command(name="remover")
+async def remover(ctx, member: discord.Member):
+    msg_id = None
+    
+    if ctx.message.reference:
+        msg_id = ctx.message.reference.message_id
+    else:
+        for mid, dados in reversed(list(listas_ativas.items())):
+            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
+                msg_id = mid
+                break
+
+    if not msg_id or msg_id not in listas_ativas:
+        await ctx.send("⚠️ Nenhuma lista aberta foi encontrada neste canal!")
+        return
+
+    dados = listas_ativas[msg_id]
+    mention = member.mention
+
+    esta_no_time = jogador_no_time_principal(dados["times"], mention)
+    esta_nos_reservas = any(r['user'] == mention for r in dados["reservas"])
+
+    if not esta_no_time and not esta_nos_reservas:
+        await ctx.send(f"⚠️ O jogador {mention} não está nesta lista.")
+        return
+
+    remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], mention)
+
+    channel = bot.get_channel(dados["channel_id"])
+    msg = await channel.fetch_message(msg_id)
+
+    novo_embed = gerar_embed(
+        dados["titulo"], 
+        dados["esquema"], 
+        dados["categoria"], 
+        dados["qtd_times"], 
+        dados["times"], 
+        dados["reservas"],
+        dados["capitaes"]
+    )
+    await msg.edit(embed=novo_embed)
+    await ctx.send(f"🗑️ O jogador {mention} foi removido da lista!")
 
 @bot.command(name="atualizarlista")
 async def atualizar_lista(ctx, nova_qtd: int):
@@ -251,14 +292,12 @@ async def atualizar_lista(ctx, nova_qtd: int):
     dados["qtd_times"] = nova_qtd
     config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
 
-    # Adiciona novos times
     for _ in range(nova_qtd - qtd_antiga):
         t_dict = {}
         for pos, qtd in config_formacao.items():
             t_dict[pos] = [None] * qtd
         dados["times"].append(t_dict)
 
-    # Realoca reservas para os novos times
     reservas_copia = list(dados["reservas"])
     for res in reservas_copia:
         user_mention = res["user"]
@@ -312,7 +351,6 @@ async def fechar_lista(ctx):
     dados = listas_ativas[msg_id]
     dados["fechada"] = True
 
-    # ESCOLHA AUTOMÁTICA DE CAPITÃES SE NINGUÉM SE CANDIDATOU
     for i in range(min(2, dados["qtd_times"])):
         if not dados["capitaes"].get(i):
             for pos, vagas in dados["times"][i].items():
