@@ -171,6 +171,46 @@ def processar_posicao(times_data, reservas, posicao, mention):
         else:
             reservas.append({"user": mention, "posicoes": [posicao]})
 
+def checar_e_expandir_auto(dados):
+    """Verifica se todos os times ativos estão 100% cheios e expande até 4 times automaticamente."""
+    max_times = len(NOMES_TIMES)  # Limite máximo de 4 times
+    
+    while dados["qtd_times"] < max_times:
+        todos_cheios = True
+        for time in dados["times"]:
+            for pos, vagas in time.items():
+                if None in vagas:
+                    todos_cheios = False
+                    break
+            if not todos_cheios:
+                break
+
+        if todos_cheios:
+            dados["qtd_times"] += 1
+            config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
+            novo_time = {pos: [None] * qtd for pos, qtd in config_formacao.items()}
+            dados["times"].append(novo_time)
+
+            # Promove reservas acumulados para o novo time criado
+            reservas_copia = list(dados["reservas"])
+            for res in reservas_copia:
+                user_mention = res["user"]
+                colocado = False
+                for pos in res["posicoes"]:
+                    time_idx = dados["qtd_times"] - 1
+                    t = dados["times"][time_idx]
+                    if pos in t and None in t[pos]:
+                        for i in range(len(t[pos])):
+                            if t[pos][i] is None:
+                                t[pos][i] = user_mention
+                                colocado = True
+                                break
+                    if colocado:
+                        dados["reservas"] = [r for r in dados["reservas"] if r["user"] != user_mention]
+                        break
+        else:
+            break
+
 # --- PAINEL DE BOTÕES INTERATIVOS ---
 class ListaButtons(discord.ui.View):
     def __init__(self, esquema):
@@ -216,6 +256,7 @@ class ListaButtons(discord.ui.View):
         elif custom_id.startswith("btn_pos_"):
             pos_key = custom_id.replace("btn_pos_", "")
             processar_posicao(dados["times"], dados["reservas"], pos_key, user_mention)
+            checar_e_expandir_auto(dados)
 
         novo_embed = gerar_embed(
             dados["titulo"], 
