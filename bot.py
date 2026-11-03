@@ -22,7 +22,6 @@ Thread(target=run_web_server, daemon=True).start()
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -34,16 +33,6 @@ FORMAGOES = {
     "442":  {"GOL": 1, "LAT": 2, "ZAG": 2, "VOL": 2, "ALA": 2, "ATA": 2},
     "4231": {"GOL": 1, "LAT": 2, "ZAG": 2, "VOL": 2, "MEI": 3, "ATA": 1},
     "532":  {"GOL": 1, "LAT": 2, "ZAG": 3, "VOL": 1, "MEI": 2, "ATA": 2},
-}
-
-EMOJIS_POSICAO = {
-    "🧤": "GOL",
-    "👟": "LAT",
-    "🛡️": "ZAG",
-    "🧱": "VOL",
-    "⚡": "ALA",
-    "⚙️": "MEI",
-    "🎯": "ATA"
 }
 
 POS_EMOJIS = {
@@ -73,8 +62,8 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, cap
         color=cor
     )
 
-    cap1 = capitaes.get(0) or "*A definir (reaja com 👑)*"
-    cap2 = capitaes.get(1) or "*A definir (reaja com 🎗️)*"
+    cap1 = capitaes.get(0) or "*A definir (clique no botão)*"
+    cap2 = capitaes.get(1) or "*A definir (clique no botão)*"
     val_capitaes = f"👑 **RoiPau:** {cap1}\n🎗️ **RoiPau FC:** {cap2}"
     embed.add_field(name="⭐ CAPITÃES DOS TIMES", value=val_capitaes, inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
@@ -111,7 +100,7 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, cap
     if fechada:
         embed.set_footer(text="🔒 LISTA FECHADA • As inscrições e alterações foram encerradas.")
     else:
-        embed.set_footer(text="Reaja com 👑/🎗️ para Capitão | Emojis de Posição para Jogar | ❌ Sair")
+        embed.set_footer(text="Clique nos botões abaixo para se inscrever ou assumir capitão!")
         
     return embed
 
@@ -182,6 +171,67 @@ def processar_posicao(times_data, reservas, posicao, mention):
         else:
             reservas.append({"user": mention, "posicoes": [posicao]})
 
+# --- PAINEL DE BOTÕES INTERATIVOS ---
+class ListaButtons(discord.ui.View):
+    def __init__(self, esquema):
+        super().__init__(timeout=None)
+        
+        # Linha 0: Capitães e Sair
+        self.add_item(discord.ui.Button(label="Cap. RoiPau", emoji="👑", style=discord.ButtonStyle.primary, custom_id="btn_cap_roipau", row=0))
+        self.add_item(discord.ui.Button(label="Cap. RoiPau FC", emoji="🎗️", style=discord.ButtonStyle.primary, custom_id="btn_cap_roipaufc", row=0))
+        self.add_item(discord.ui.Button(label="Sair da Lista", emoji="❌", style=discord.ButtonStyle.danger, custom_id="btn_sair", row=0))
+
+        # Linhas de Posições (GOL, ZAG, MEI, ATA, etc.)
+        config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
+        row_curr = 1
+        count_in_row = 0
+        
+        for pos in config_formacao.keys():
+            emoji = POS_EMOJIS.get(pos, "⚽")
+            btn = discord.ui.Button(label=pos, emoji=emoji, style=discord.ButtonStyle.secondary, custom_id=f"btn_pos_{pos}", row=row_curr)
+            self.add_item(btn)
+            count_in_row += 1
+            if count_in_row >= 4:
+                row_curr += 1
+                count_in_row = 0
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        msg_id = interaction.message.id
+        if msg_id not in listas_ativas:
+            await interaction.response.send_message("⚠️ Esta lista já não está ativa.", ephemeral=True)
+            return False
+
+        dados = listas_ativas[msg_id]
+        if dados["fechada"]:
+            await interaction.response.send_message("🔒 Esta lista já está fechada!", ephemeral=True)
+            return False
+
+        custom_id = interaction.data["custom_id"]
+        user_mention = interaction.user.mention
+
+        if custom_id == "btn_cap_roipau":
+            dados["capitaes"][0] = user_mention
+        elif custom_id == "btn_cap_roipaufc":
+            dados["capitaes"][1] = user_mention
+        elif custom_id == "btn_sair":
+            remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], user_mention)
+        elif custom_id.startswith("btn_pos_"):
+            pos_key = custom_id.replace("btn_pos_", "")
+            processar_posicao(dados["times"], dados["reservas"], pos_key, user_mention)
+
+        novo_embed = gerar_embed(
+            dados["titulo"], 
+            dados["esquema"], 
+            dados["categoria"], 
+            dados["qtd_times"], 
+            dados["times"], 
+            dados["reservas"],
+            dados["capitaes"]
+        )
+
+        await interaction.response.edit_message(embed=novo_embed, view=self)
+        return True
+
 @bot.command(name="criarlista")
 async def criar_lista(ctx, *, args):
     try:
@@ -201,8 +251,9 @@ async def criar_lista(ctx, *, args):
         reservas = []
         capitaes = {0: None, 1: None}
 
+        view = ListaButtons(esquema)
         embed = gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, capitaes)
-        msg = await ctx.send(embed=embed)
+        msg = await ctx.send(embed=embed, view=view)
 
         listas_ativas[msg.id] = {
             "titulo": titulo,
@@ -213,16 +264,9 @@ async def criar_lista(ctx, *, args):
             "reservas": reservas,
             "capitaes": capitaes,
             "channel_id": ctx.channel.id,
-            "fechada": False
+            "fechada": False,
+            "view": view
         }
-
-        await msg.add_reaction("👑")
-        await msg.add_reaction("🎗️")
-
-        for pos in config_formacao.keys():
-            if pos in POS_EMOJIS:
-                await msg.add_reaction(POS_EMOJIS[pos])
-        await msg.add_reaction("❌")
 
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
@@ -267,7 +311,7 @@ async def remover(ctx, member: discord.Member):
         dados["reservas"],
         dados["capitaes"]
     )
-    await msg.edit(embed=novo_embed)
+    await msg.edit(embed=novo_embed, view=dados.get("view"))
     await ctx.send(f"🗑️ O jogador {mention} foi removido da lista!")
 
 @bot.command(name="atualizarlista")
@@ -329,7 +373,7 @@ async def atualizar_lista(ctx, nova_qtd: int):
         dados["reservas"],
         dados["capitaes"]
     )
-    await msg.edit(embed=novo_embed)
+    await msg.edit(embed=novo_embed, view=dados.get("view"))
     await ctx.send(f"⚡ **Lista atualizada de {qtd_antiga} para {nova_qtd} times!** Os reservas foram escalados nos novos times.")
 
 @bot.command(name="fecharlista")
@@ -374,8 +418,8 @@ async def fechar_lista(ctx):
             dados["capitaes"],
             fechada=True
         )
-        await msg.edit(embed=novo_embed)
-        await msg.clear_reactions()
+        # Remove os botões da lista ao fechar
+        await msg.edit(embed=novo_embed, view=None)
 
         mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
 
@@ -402,51 +446,6 @@ async def fechar_lista(ctx):
 
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao atualizar lista: {e}")
-
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.user_id == bot.user.id:
-        return
-
-    msg_id = payload.message_id
-    if msg_id not in listas_ativas:
-        return
-
-    dados = listas_ativas[msg_id]
-    channel = bot.get_channel(payload.channel_id)
-    msg = await channel.fetch_message(msg_id)
-    user = await bot.fetch_user(payload.user_id)
-
-    try:
-        await msg.remove_reaction(payload.emoji, user)
-    except Exception:
-        pass
-
-    if dados["fechada"]:
-        return
-
-    emoji_str = str(payload.emoji)
-
-    if emoji_str == "👑":
-        dados["capitaes"][0] = user.mention
-    elif emoji_str == "🎗️":
-        dados["capitaes"][1] = user.mention
-    elif emoji_str == "❌":
-        remover_jogador(dados["times"], dados["reservas"], dados["capitaes"], user.mention)
-    elif emoji_str in EMOJIS_POSICAO:
-        pos_key = EMOJIS_POSICAO[emoji_str]
-        processar_posicao(dados["times"], dados["reservas"], pos_key, user.mention)
-
-    novo_embed = gerar_embed(
-        dados["titulo"], 
-        dados["esquema"], 
-        dados["categoria"], 
-        dados["qtd_times"], 
-        dados["times"], 
-        dados["reservas"],
-        dados["capitaes"]
-    )
-    await msg.edit(embed=novo_embed)
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 bot.run(TOKEN)
