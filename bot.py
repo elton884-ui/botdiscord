@@ -502,4 +502,66 @@ async def fechar_lista(ctx):
     else:
         for mid, dados in reversed(list(listas_ativas.items())):
             if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg
+                msg_id = mid
+                break
+
+    if not msg_id or msg_id not in listas_ativas:
+        await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
+        return
+
+    dados = listas_ativas[msg_id]
+    dados["fechada"] = True
+
+    for i in range(min(2, dados["qtd_times"])):
+        if not dados["capitaes"].get(i):
+            jogadores_do_time = [j for vagas in dados["times"][i].values() for j in vagas if j]
+            outro_cap_id = extrair_id(dados["capitaes"].get(1 if i == 0 else 0))
+            
+            candidatos = [j for j in jogadores_do_time if extrair_id(j) != outro_cap_id]
+            
+            if candidatos:
+                dados["capitaes"][i] = random.choice(candidatos)
+            elif jogadores_do_time:
+                dados["capitaes"][i] = random.choice(jogadores_do_time)
+
+    channel = bot.get_channel(dados["channel_id"])
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed(
+            dados["titulo"], 
+            dados["esquema"], 
+            dados["categoria"], 
+            dados["qtd_times"], 
+            dados["times"], 
+            dados["reservas"],
+            dados["capitaes"],
+            fechada=True
+        )
+        await msg.edit(embed=novo_embed, view=None)
+
+        mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
+
+        for idx, time in enumerate(dados["times"]):
+            nome_time = NOMES_TIMES[idx] if idx < len(NOMES_TIMES) else f"Time {idx+1}"
+            capitao = dados["capitaes"].get(idx) or "*Nenhum capitão definido*"
+
+            jogadores = []
+            for pos, vagas in time.items():
+                for j in vagas:
+                    if j:
+                        jogadores.append(j)
+
+            mencoes = " ".join(jogadores) if jogadores else "*Nenhum jogador escalado*"
+
+            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
+            mensagem_escalacao += f"👥 **Jogadores:** {mencoes}\n"
+            mensagem_escalacao += f"🔊 **Call:** Entrar na call do {nome_time}\n"
+            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+
+        await ctx.send(mensagem_escalacao)
+
+    except Exception as e:
+        await ctx.send(f"⚠️ Erro ao atualizar lista: {e}")
+
+TOKEN = os.environ.get("DISCORD_TOKEN")
+bot.run(TOKEN)
