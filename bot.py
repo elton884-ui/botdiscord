@@ -46,13 +46,7 @@ POS_EMOJIS = {
     "ATA": "🎯"
 }
 
-NOMES_TIMES = ["RoiPau", "RoiPau FC", "RoiPau 3", "RoiPau 4"]
-LINKS_CALL = [
-    "https://discord.com/channels/1468243764412809462/1524800890094223490",  # RoiPau
-    "https://discord.com/channels/1468243764412809462/1553042214517735515",  # RoiPau FC
-    "",
-    ""
-]
+NOMES_TIMES = ["Time 1", "Time 2", "Time 3", "Time 4"]
 
 def extrair_id(texto):
     if not texto:
@@ -71,7 +65,7 @@ def gerar_embed(titulo, esquema, categoria, qtd_times, times_data, reservas, cap
 
     cap1 = capitaes.get(0) or "*A definir (clique no botão)*"
     cap2 = capitaes.get(1) or "*A definir (clique no botão)*"
-    val_capitaes = f"👑 **RoiPau:** {cap1}\n🎗️ **RoiPau FC:** {cap2}"
+    val_capitaes = f"👑 **Time 1:** {cap1}\n🎗️ **Time 2:** {cap2}"
     embed.add_field(name="⭐ CAPITÃES DOS TIMES", value=val_capitaes, inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
@@ -229,8 +223,8 @@ class ListaButtons(discord.ui.View):
     def __init__(self, esquema):
         super().__init__(timeout=None)
         
-        self.add_item(discord.ui.Button(label="Cap. RoiPau", emoji="👑", style=discord.ButtonStyle.primary, custom_id="btn_cap_roipau", row=0))
-        self.add_item(discord.ui.Button(label="Cap. RoiPau FC", emoji="🎗️", style=discord.ButtonStyle.primary, custom_id="btn_cap_roipaufc", row=0))
+        self.add_item(discord.ui.Button(label="Cap. Time 1", emoji="👑", style=discord.ButtonStyle.primary, custom_id="btn_cap_time1", row=0))
+        self.add_item(discord.ui.Button(label="Cap. Time 2", emoji="🎗️", style=discord.ButtonStyle.primary, custom_id="btn_cap_time2", row=0))
         self.add_item(discord.ui.Button(label="Sair da Lista", emoji="❌", style=discord.ButtonStyle.danger, custom_id="btn_sair", row=0))
 
         config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
@@ -264,31 +258,30 @@ class ListaButtons(discord.ui.View):
         cap0_id = extrair_id(dados["capitaes"].get(0))
         cap1_id = extrair_id(dados["capitaes"].get(1))
 
-        # VALIDAÇÃO DE CAPITÃO: Exige estar escalado no time correspondente
-        if custom_id == "btn_cap_roipau":
+        if custom_id == "btn_cap_time1":
             if not jogador_no_time_especifico(dados["times"][0], user_id):
-                await interaction.response.send_message("⚠️ Você precisa estar escalado no time **RoiPau** para ser o capitão dele!", ephemeral=True)
+                await interaction.response.send_message("⚠️ Você precisa estar escalado no **Time 1** para ser o capitão dele!", ephemeral=True)
                 return False
 
             if cap0_id == user_id:
                 dados["capitaes"][0] = None
             elif cap0_id is not None:
-                await interaction.response.send_message("⚠️ O RoiPau já tem um capitão definido! Ele precisa clicar no botão para sair antes que outro assuma.", ephemeral=True)
+                await interaction.response.send_message("⚠️ O **Time 1** já tem um capitão definido! Ele precisa clicar no botão para sair antes que outro assuma.", ephemeral=True)
                 return False
             else:
                 if cap1_id == user_id:
                     dados["capitaes"][1] = None
                 dados["capitaes"][0] = user_mention
 
-        elif custom_id == "btn_cap_roipaufc":
+        elif custom_id == "btn_cap_time2":
             if len(dados["times"]) < 2 or not jogador_no_time_especifico(dados["times"][1], user_id):
-                await interaction.response.send_message("⚠️ Você precisa estar escalado no time **RoiPau FC** para ser o capitão dele!", ephemeral=True)
+                await interaction.response.send_message("⚠️ Você precisa estar escalado no **Time 2** para ser o capitão dele!", ephemeral=True)
                 return False
 
             if cap1_id == user_id:
                 dados["capitaes"][1] = None
             elif cap1_id is not None:
-                await interaction.response.send_message("⚠️ O RoiPau FC já tem um capitão definido! Ele precisa clicar no botão para sair antes que outro assuma.", ephemeral=True)
+                await interaction.response.send_message("⚠️ O **Time 2** já tem um capitão definido! Ele precisa clicar no botão para sair antes que outro assuma.", ephemeral=True)
                 return False
             else:
                 if cap0_id == user_id:
@@ -509,68 +502,4 @@ async def fechar_lista(ctx):
     else:
         for mid, dados in reversed(list(listas_ativas.items())):
             if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
-        return
-
-    dados = listas_ativas[msg_id]
-    dados["fechada"] = True
-
-    for i in range(min(2, dados["qtd_times"])):
-        if not dados["capitaes"].get(i):
-            jogadores_do_time = [j for vagas in dados["times"][i].values() for j in vagas if j]
-            outro_cap_id = extrair_id(dados["capitaes"].get(1 if i == 0 else 0))
-            
-            candidatos = [j for j in jogadores_do_time if extrair_id(j) != outro_cap_id]
-            
-            if candidatos:
-                dados["capitaes"][i] = random.choice(candidatos)
-            elif jogadores_do_time:
-                dados["capitaes"][i] = random.choice(jogadores_do_time)
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        novo_embed = gerar_embed(
-            dados["titulo"], 
-            dados["esquema"], 
-            dados["categoria"], 
-            dados["qtd_times"], 
-            dados["times"], 
-            dados["reservas"],
-            dados["capitaes"],
-            fechada=True
-        )
-        await msg.edit(embed=novo_embed, view=None)
-
-        mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA E CONVOCADA!**\n\n"
-
-        for idx, time in enumerate(dados["times"]):
-            nome_time = NOMES_TIMES[idx] if idx < len(NOMES_TIMES) else f"Time {idx+1}"
-            link_call = LINKS_CALL[idx] if idx < len(LINKS_CALL) else ""
-            capitao = dados["capitaes"].get(idx) or "*Nenhum capitão definido*"
-
-            jogadores = []
-            for pos, vagas in time.items():
-                for j in vagas:
-                    if j:
-                        jogadores.append(j)
-
-            mencoes = " ".join(jogadores) if jogadores else "*Nenhum jogador escalado*"
-
-            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
-            mensagem_escalacao += f"👥 **Jogadores:** {mencoes}\n"
-            if link_call:
-                mensagem_escalacao += f"🔊 **Entrar na Call:** {link_call}\n"
-            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-
-        await ctx.send(mensagem_escalacao)
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao atualizar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-bot.run(TOKEN)
+                msg
