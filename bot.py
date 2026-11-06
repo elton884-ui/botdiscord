@@ -75,6 +75,7 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     linhas_vagas = []
 
+    # Organiza cada vaga estritamente em formato de lista vertical (uma por linha)
     for pos, qtd_por_time in config_formacao.items():
         emoji = POS_EMOJIS.get(pos, "⚽")
         limite_vagas = qtd_por_time * len(NOMES_TIMES)
@@ -237,7 +238,6 @@ async def criar_lista(ctx, *, args):
         view = ListaButtonsDinamica(esquema)
         embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes)
         
-        # Envia a mensagem marcando @everyone junto com o embed e os botões
         msg = await ctx.send(content="@everyone", embed=embed, view=view)
 
         listas_ativas[msg.id] = {
