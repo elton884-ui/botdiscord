@@ -46,8 +46,8 @@ POS_EMOJIS = {
     "ATA": "🎯"
 }
 
-NOMES_TIMES = ["Time 1", "Time 2"]
-EMOJIS_CAP = ["👑", "🎗️"]
+NOMES_TIMES = ["Time 1", "Time 2", "Time 3", "Time 4"]
+EMOJIS_CAP = ["👑", "🎗️", "⭐", "🌟"]
 
 def extrair_id(texto):
     if not texto:
@@ -55,7 +55,7 @@ def extrair_id(texto):
     match = re.search(r'\d+', str(texto))
     return int(match.group()) if match else None
 
-def gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, capitaes):
+def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes):
     embed = discord.Embed(
         title=f"📋 {titulo.upper()}",
         description=f"⚽ **Formação:** `{esquema}` | **Foco:** `{categoria}`\n👥 **Titulares:** `{len(titulares)}` | ⏳ **Reservas:** `{len(reservas)}`\n\u200b",
@@ -63,7 +63,7 @@ def gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, ca
     )
 
     val_capitaes_list = []
-    for i in range(2):
+    for i in range(len(NOMES_TIMES)):
         nome_t = NOMES_TIMES[i]
         cap = capitaes.get(i) or "*A definir (clique no botão)*"
         emoji_cap = EMOJIS_CAP[i]
@@ -75,18 +75,19 @@ def gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, ca
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     linhas_vagas = []
 
+    # Exibe espaço para até 4 times no painel aberto
     for pos, qtd_por_time in config_formacao.items():
         emoji = POS_EMOJIS.get(pos, "⚽")
-        limite_vagas = qtd_por_time * 2
+        limite_vagas = qtd_por_time * len(NOMES_TIMES)
         
         ocupantes_pos = [item for item in titulares if item['pos'] == pos]
 
         for i in range(limite_vagas):
-            num_str = f" {i+1}" if limite_vagas > 2 else ""
+            num_str = f" {i+1}" if limite_vagas > len(NOMES_TIMES) else ""
             jogador_nome = ocupantes_pos[i]['user'] if i < len(ocupantes_pos) else "*Vago*"
             linhas_vagas.append(f"{emoji} `{pos}{num_str}:` {jogador_nome}")
 
-    embed.add_field(name="👥 TITULARES (2 TIMES)", value="\n".join(linhas_vagas), inline=False)
+    embed.add_field(name="👥 QUADRO DE INSCRITOS", value="\n".join(linhas_vagas), inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
     if reservas:
@@ -111,7 +112,7 @@ def jogador_ja_esta_na_lista(titulares, reservas, target_id):
             return True
     return False
 
-class ListaButtonsFixo(discord.ui.View):
+class ListaButtonsDinamica(discord.ui.View):
     def __init__(self, esquema):
         super().__init__(timeout=None)
         
@@ -199,7 +200,8 @@ class ListaButtonsFixo(discord.ui.View):
                 await interaction.response.send_message("⚠️ Você já está inscrito nesta lista!", ephemeral=True)
                 return False
 
-            limite_pos = config_formacao.get(pos_key, 1) * 2
+            # Limite inicial considerando 4 times para preenchimento livre
+            limite_pos = config_formacao.get(pos_key, 1) * len(NOMES_TIMES)
             ocupantes_pos = [item for item in dados["titulares"] if item['pos'] == pos_key]
 
             if len(ocupantes_pos) < limite_pos:
@@ -207,7 +209,7 @@ class ListaButtonsFixo(discord.ui.View):
             else:
                 dados["reservas"].append({"user": user_mention, "pos": pos_key})
 
-        novo_embed = gerar_embed_fixo_2_times(
+        novo_embed = gerar_embed_dinamico(
             dados["titulo"], 
             dados["esquema"], 
             dados["categoria"], 
@@ -232,10 +234,10 @@ async def criar_lista(ctx, *, args):
 
         titulares = []
         reservas = []
-        capitaes = {0: None, 1: None}
+        capitaes = {i: None for i in range(len(NOMES_TIMES))}
 
-        view = ListaButtonsFixo(esquema)
-        embed = gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, capitaes)
+        view = ListaButtonsDinamica(esquema)
+        embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes)
         msg = await ctx.send(embed=embed, view=view)
 
         listas_ativas[msg.id] = {
@@ -285,7 +287,7 @@ async def remover(ctx, member: discord.Member = None):
 
     channel = bot.get_channel(dados["channel_id"])
     msg = await channel.fetch_message(msg_id)
-    novo_embed = gerar_embed_fixo_2_times(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"])
+    novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"])
     await msg.edit(embed=novo_embed, view=dados.get("view"))
 
     try:
@@ -318,34 +320,71 @@ async def fechar_lista(ctx):
 
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
+    vagas_por_time = sum(config_formacao.values())
 
+    total_titulares = len(dados["titulares"])
+    
+    # Calcula automaticamente quantos times serão formados (2, 3 ou 4) com base nos inscritos
+    if total_titulares > (vagas_por_time * 3):
+        qtd_times = 4
+    elif total_titulares > (vagas_por_time * 2):
+        qtd_times = 3
+    else:
+        qtd_times = 2
+
+    # Mapeia capitães escolhidos por índice do time
     capitaes_atribuidos = {}
-    for i in range(2):
+    capitaes_ids = []
+    for i in range(qtd_times):
         cap = dados["capitaes"].get(i)
         if cap:
             capitaes_atribuidos[i] = cap
+            capitaes_ids.append(extrair_id(cap))
 
-    # Organiza os times separando perfeitamente a 1ª metade para o Time 1 e a 2ª metade para o Time 2
-    time_1 = {pos: [] for pos in config_formacao.keys()}
-    time_2 = {pos: [] for pos in config_formacao.keys()}
+    # Cria a estrutura dos times com base na quantidade calculada
+    times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
 
-    for pos, qtd_por_time in config_formacao.items():
-        ocupantes_pos = [item['user'] for item in dados["titulares"] if item['pos'] == pos]
+    # 1. Aloca os capitães nos seus respectivos times e posições se estiverem nos titulares
+    demais_titulares = []
+    for item in dados["titulares"]:
+        uid = extrair_id(item['user'])
+        alocado_como_cap = False
         
-        for i, jogador in enumerate(ocupantes_pos):
-            if i < qtd_por_time:
-                time_1[pos].append(jogador)
-            else:
-                time_2[pos].append(jogador)
+        for i in range(qtd_times):
+            if uid == extrair_id(capitaes_atribuidos.get(i)):
+                pos = item['pos']
+                if len(times_montados[i][pos]) < config_formacao[pos]:
+                    times_montados[i][pos].append(item['user'])
+                    alocado_como_cap = True
+                    break
+        
+        if not alocado_como_cap:
+            demais_titulares.append(item)
 
-    # Capitães automáticos se faltar algum
-    todos_titulares_flat = [j for v in time_1.values() for j in v] + [j for v in time_2.values() for j in v]
-    
-    for i in range(2):
+    # 2. Embaralha os demais jogadores de forma totalmente aleatória
+    random.shuffle(demais_titulares)
+
+    # 3. Distribui aleatoriamente pelas vagas restantes dos times ativos
+    for item in demais_titulares:
+        pos = item['pos']
+        
+        # Encontra quais times ainda têm vaga para esta posição específica
+        times_com_vaga = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
+        
+        if times_com_vaga:
+            # Sorteia aleatoriamente entre os times que têm vaga nessa posição
+            t_escolhido = random.choice(times_com_vaga)
+            times_montados[t_escolhido][pos].append(item['user'])
+        else:
+            # Se a posição estiver cheia em todos os times ativos, vai para a reserva
+            dados["reservas"].append(item)
+
+    # 4. Se faltar capitão escolhido em algum time, escolhe aleatoriamente um titular daquele time
+    for i in range(qtd_times):
         if i not in capitaes_atribuidos:
-            candidatos_time = list(time_1.values())[0] if i == 0 and time_1 else list(time_2.values())[0] if i == 1 and time_2 else todos_titulares_flat
-            if candidatos_time:
-                sorteado = random.choice(candidatos_time)
+            candidatos = [j for v in times_montados[i].values() for j in v]
+            if candidatos:
+                sorteado = random.choice(candidatos)
                 capitaes_atribuidos[i] = sorteado
             else:
                 capitaes_atribuidos[i] = "*Nenhum*"
@@ -355,14 +394,14 @@ async def fechar_lista(ctx):
         msg = await channel.fetch_message(msg_id)
         await msg.edit(view=None)
 
-        mensagem_escalacao = "🔒 **ESCALAÇÃO FINALIZADA (2 TIMES CONVOCADOS)!**\n\n"
+        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES CONVOCADOS COM SORTEIO)!**\n\n"
 
-        times_lista = [("Time 1", time_1), ("Time 2", time_2)]
-        for idx, (nome_time, t_dict) in enumerate(times_lista):
+        for idx in range(qtd_times):
+            nome_time = NOMES_TIMES[idx]
             capitao = capitaes_atribuidos.get(idx, "*Nenhum*")
 
             membros_time = []
-            for pos, lista_jogadores in t_dict.items():
+            for pos, lista_jogadores in times_montados[idx].items():
                 emoji = POS_EMOJIS.get(pos, "⚽")
                 for j in lista_jogadores:
                     membros_time.append(f"{emoji}{pos}: {j}")
