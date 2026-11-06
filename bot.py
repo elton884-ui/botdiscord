@@ -62,7 +62,6 @@ def gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, ca
         color=discord.Color.green()
     )
 
-    # Capitães
     val_capitaes_list = []
     for i in range(2):
         nome_t = NOMES_TIMES[i]
@@ -76,7 +75,6 @@ def gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, ca
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     linhas_vagas = []
 
-    # Para cada posição, o limite total para 2 times é (qtd_por_time * 2)
     for pos, qtd_por_time in config_formacao.items():
         emoji = POS_EMOJIS.get(pos, "⚽")
         limite_vagas = qtd_por_time * 2
@@ -206,7 +204,6 @@ class ListaButtonsFixo(discord.ui.View):
             limite_pos = config_formacao.get(pos_key, 1) * 2
             ocupantes_pos = [item for item in dados["titulares"] if item['pos'] == pos_key]
 
-            # Se ainda houver vaga nos titulares para essa posição, entra como titular. Senão, vai para suplentes/reservas.
             if len(ocupantes_pos) < limite_pos:
                 dados["titulares"].append({"user": user_mention, "pos": pos_key})
             else:
@@ -324,35 +321,32 @@ async def fechar_lista(ctx):
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
 
-    # Separa capitães
     capitaes_atribuidos = {}
-    capitaes_ids = []
     for i in range(2):
         cap = dados["capitaes"].get(i)
         if cap:
             capitaes_atribuidos[i] = cap
-            capitaes_ids.append(extrair_id(cap))
 
-    # Divide os titulares entre Time 1 e Time 2 de forma equilibrada por posição
+    # Separa os titulares estritamente por ordem de entrada nas vagas de cada posição
     time_1 = {pos: [] for pos in config_formacao.keys()}
     time_2 = {pos: [] for pos in config_formacao.keys()}
 
-    # Agrupa os titulares por posição
+    # Agrupa titulares por posição na ordem que se inscreveram
+    pos_contador = {pos: 0 for pos in config_formacao.keys()}
+
     for item in dados["titulares"]:
         pos = item['pos']
-        # Alterna entre time 1 e time 2 para garantir equilíbrio
-        if pos in time_1 and len(time_1[pos]) < config_formacao[pos]:
+        qtd_por_time = config_formacao[pos]
+        
+        # Se o índice atual preenche a cota do Time 1, vai para o Time 1. Senão, Time 2.
+        if pos_contador[pos] < qtd_por_time:
             time_1[pos].append(item['user'])
-        elif pos in time_2 and len(time_2[pos]) < config_formacao[pos]:
-            time_2[pos].append(item['user'])
         else:
-            # Caso caia algum excedente por ajuste, joga no time 1 ou 2 que tiver espaço
-            if sum(len(v) for v in time_1.values()) <= sum(len(v) for v in time_2.values()):
-                time_1[pos].append(item['user'])
-            else:
-                time_2[pos].append(item['user'])
+            time_2[pos].append(item['user'])
+        
+        pos_contador[pos] += 1
 
-    # Se faltar capitão escolhido, sorteia entre os titulares de cada time
+    # Garante capitães automáticos se faltar algum
     todos_titulares_flat = [j for v in time_1.values() for j in v] + [j for v in time_2.values() for j in v]
     
     for i in range(2):
@@ -388,7 +382,6 @@ async def fechar_lista(ctx):
             mensagem_escalacao += f"🔊 **Call:** Entrar na call do {nome_time}\n"
             mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
 
-        # Se houver reservas
         if dados["reservas"]:
             res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
             mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
