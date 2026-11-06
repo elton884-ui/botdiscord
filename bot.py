@@ -236,7 +236,9 @@ async def criar_lista(ctx, *, args):
 
         view = ListaButtonsDinamica(esquema)
         embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes)
-        msg = await ctx.send(embed=embed, view=view)
+        
+        # Envia a mensagem marcando @everyone junto com o embed e os botões
+        msg = await ctx.send(content="@everyone", embed=embed, view=view)
 
         listas_ativas[msg.id] = {
             "titulo": titulo,
@@ -369,14 +371,12 @@ async def fechar_lista(ctx):
     # 3. Distribui os restantes aleatoriamente pelas vagas disponíveis nos times
     for item in restantes:
         pos = item['pos']
-        # Procura times ativos que ainda têm vaga nessa posição
         times_com_vaga = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
         
         if times_com_vaga:
             t_escolhido = random.choice(times_com_vaga)
             times_montados[t_escolhido][pos].append(item['user'])
         else:
-            # Se a posição estiver cheia, joga aleatoriamente em qualquer vaga livre de qualquer time
             vagas_livres_geral = []
             for i in range(qtd_times):
                 for p in config_formacao.keys():
