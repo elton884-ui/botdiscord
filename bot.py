@@ -330,7 +330,6 @@ async def fechar_lista(ctx):
     else:
         qtd_times = 2
 
-    # Cria a estrutura dos times ativos
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
 
     capitaes_atribuidos = {}
@@ -339,68 +338,80 @@ async def fechar_lista(ctx):
         if cap:
             capitaes_atribuidos[i] = cap
 
-    # 1. Aloca os capitães escolhidos diretamente nos seus times e posições de origem
-    demais_titulares = []
-    for item in dados["titulares"]:
-        uid = extrair_id(item['user'])
-        alocado = False
-        
-        for i in range(qtd_times):
-            if uid == extrair_id(capitaes_atribuidos.get(i)):
-                pos = item['pos']
-                if len(times_montados[i][pos]) < config_formacao[pos]:
-                    times_montados[i][pos].append(item['user'])
-                    alocado = True
+    # 1. Separa os capitães e garante que cada um vai para o seu time de origem na devida posição
+    jogadores_restantes = list(dados["titulares"])
+    
+    for i in range(qtd_times):
+        cap_str = capitaes_atribuidos.get(i)
+        if cap_str:
+            cap_id = extrair_id(cap_str)
+            # Procura o capitão nos titulares
+            encontrado = None
+            for item in jogadores_restantes:
+                if extrair_id(item['user']) == cap_id:
+                    encontrado = item
                     break
-        if not alocado:
-            demais_titulares.append(item)
+            
+            if encontrado:
+                jogadores_restantes.remove(encontrado)
+                pos = encontrado['pos']
+                # Se houver vaga nessa posição no time dele, coloca lá. Senão, põe na primeira vaga livre do time dele.
+                if len(times_montados[i][pos]) < config_formacao[pos]:
+                    times_montados[i][pos].append(encontrado['user'])
+                else:
+                    # Acha outra posição com vaga no mesmo time
+                    alocado_outro = False
+                    for p in config_formacao.keys():
+                        if len(times_montados[i][p]) < config_formacao[p]:
+                            times_montados[i][p].append(encontrado['user'])
+                            alocado_outro = True
+                            break
+                    if not alocado_outro:
+                        # Se o time estiver totalmente lotado, vira reserva de luxo temporário
+                        dados["reservas"].append(encontrado)
 
-    # 2. Embaralha o restante dos jogadores aleatoriamente
-    random.shuffle(demais_titulares)
+    # 2. TRAVA DE SEGURANÇA: Se algum time ficou totalmente vazio (ex: sem capitão escolhido), 
+    # puxa imediatamente o primeiro jogador da lista restante para garantir que o time tem dono!
+    for i in range(qtd_times):
+        membros_deste_time = [j for v in times_montados[i].values() for j in v]
+        if not membros_deste_time and jogadores_restantes:
+            puxado = jogadores_restantes.pop(0)
+            pos_puxada = puxado['pos']
+            if len(times_montados[i][pos_puxada]) < config_formacao[pos_puxada]:
+                times_montados[i][pos_puxada].append(puxado['user'])
+            else:
+                for p in config_formacao.keys():
+                    if len(times_montados[i][p]) < config_formacao[p]:
+                        times_montados[i][p].append(puxado['user'])
+                        break
 
-    # 3. Distribui os demais jogadores pelas vagas livres dos times
-    for item in demais_titulares:
+    # 3. Embaralha o restante dos jogadores de forma totalmente aleatória
+    random.shuffle(jogadores_restantes)
+
+    # 4. Distribui o resto dos jogadores de forma equilibrada e aleatória pelos times ativos
+    for item in jogadores_restantes:
         pos = item['pos']
-        times_com_vaga = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
+        # Prioriza times que ainda têm vaga nessa exata posição
+        times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
         
-        if times_com_vaga:
-            t_escolhido = random.choice(times_com_vaga)
+        if times_com_vaga_pos:
+            t_escolhido = random.choice(times_com_vaga_pos)
             times_montados[t_escolhido][pos].append(item['user'])
         else:
-            # Se a posição estiver cheia em todos, tenta qualquer vaga livre em qualquer time
-            vaga_geral_encontrada = False
+            # Se a posição estiver cheia em todos, procura qualquer vaga livre em qualquer time
+            vaga_geral = False
             for i in range(qtd_times):
                 for p in config_formacao.keys():
                     if len(times_montados[i][p]) < config_formacao[p]:
                         times_montados[i][p].append(item['user'])
-                        vaga_geral_encontrada = True
+                        vaga_geral = True
                         break
-                if vaga_geral_encontrada:
+                if vaga_geral:
                     break
-            if not vaga_geral_encontrada:
+            if not vaga_geral:
                 dados["reservas"].append(item)
 
-    # 4. TRAVA DE SEGURANÇA: Se algum time ficou vazio, rouba um jogador excedente ou da reserva para não falhar
-    todos_jogadores_flat = [j for t in times_montados for v in t.values() for j in v]
-    for i in range(qtd_times):
-        membros_deste_time = [j for v in times_montados[i].values() for j in v]
-        if not membros_deste_time:
-            # Se o time está vazio, pega o primeiro jogador disponível de outro time ou reserva
-            if dados["reservas"]:
-                reserva_puxado = dados["reservas"].pop(0)
-                pos_puxada = reserva_puxado['pos']
-                times_montados[i][pos_puxada].append(reserva_puxado['user'])
-            elif len(todos_jogadores_flat) > qtd_times:
-                # Se há folga em outro time, move alguém para garantir que ninguém fica a zeros
-                for outro_i in range(qtd_times):
-                    for p, lista_j in times_montados[outro_i].items():
-                        if len(lista_j) > 1:
-                            movido = lista_j.pop()
-                            times_montados[i][p].append(movido)
-                            break
-                    break
-
-    # 5. Define capitão automático para os times que ficaram sem capitão escolhido
+    # 5. Define capitão automático para os times que ainda não têm capitão manual
     for i in range(qtd_times):
         if i not in capitaes_atribuidos:
             candidatos = [j for v in times_montados[i].values() for j in v]
