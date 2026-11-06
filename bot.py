@@ -79,14 +79,12 @@ def gerar_embed_fixo_2_times(titulo, esquema, categoria, titulares, reservas, ca
         emoji = POS_EMOJIS.get(pos, "⚽")
         limite_vagas = qtd_por_time * 2
         
-        ocupantes_pos = [item['user'] for item in titulares if item['pos'] == pos]
+        ocupantes_pos = [item for item in titulares if item['pos'] == pos]
 
         for i in range(limite_vagas):
             num_str = f" {i+1}" if limite_vagas > 2 else ""
-            if i < len(ocupantes_pos):
-                linhas_vagas.append(f"{emoji} `{pos}{num_str}:` {ocupantes_pos[i]}")
-            else:
-                linhas_vagas.append(f"{emoji} `{pos}{num_str}:` *Vago*")
+            jogador_nome = ocupantes_pos[i]['user'] if i < len(ocupantes_pos) else "*Vago*"
+            linhas_vagas.append(f"{emoji} `{pos}{num_str}:` {jogador_nome}")
 
     embed.add_field(name="👥 TITULARES (2 TIMES)", value="\n".join(linhas_vagas), inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
@@ -327,26 +325,20 @@ async def fechar_lista(ctx):
         if cap:
             capitaes_atribuidos[i] = cap
 
-    # Separa os titulares estritamente por ordem de entrada nas vagas de cada posição
+    # Organiza os times separando perfeitamente a 1ª metade para o Time 1 e a 2ª metade para o Time 2
     time_1 = {pos: [] for pos in config_formacao.keys()}
     time_2 = {pos: [] for pos in config_formacao.keys()}
 
-    # Agrupa titulares por posição na ordem que se inscreveram
-    pos_contador = {pos: 0 for pos in config_formacao.keys()}
-
-    for item in dados["titulares"]:
-        pos = item['pos']
-        qtd_por_time = config_formacao[pos]
+    for pos, qtd_por_time in config_formacao.items():
+        ocupantes_pos = [item['user'] for item in dados["titulares"] if item['pos'] == pos]
         
-        # Se o índice atual preenche a cota do Time 1, vai para o Time 1. Senão, Time 2.
-        if pos_contador[pos] < qtd_por_time:
-            time_1[pos].append(item['user'])
-        else:
-            time_2[pos].append(item['user'])
-        
-        pos_contador[pos] += 1
+        for i, jogador in enumerate(ocupantes_pos):
+            if i < qtd_por_time:
+                time_1[pos].append(jogador)
+            else:
+                time_2[pos].append(jogador)
 
-    # Garante capitães automáticos se faltar algum
+    # Capitães automáticos se faltar algum
     todos_titulares_flat = [j for v in time_1.values() for j in v] + [j for v in time_2.values() for j in v]
     
     for i in range(2):
@@ -379,7 +371,7 @@ async def fechar_lista(ctx):
 
             mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
             mensagem_escalacao += f"👥 **Elenco:** {mencoes_str}\n"
-            mensagem_escalacao += f"🔊 **Call:** Entrar na call do {nome_time}\n"
+            mensagem_escalacao += f"🔊 **Call:** Entrar na call do **{nome_time}**\n"
             mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
 
         if dados["reservas"]:
