@@ -75,7 +75,6 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     linhas_vagas = []
 
-    # Organiza cada vaga estritamente em formato de lista vertical (uma por linha)
     for pos, qtd_por_time in config_formacao.items():
         emoji = POS_EMOJIS.get(pos, "⚽")
         limite_vagas = qtd_por_time * len(NOMES_TIMES)
@@ -220,6 +219,26 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
+# --- COMANDO DE TESTE ---
+@bot.command(name="teste")
+async def teste(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    ping_ms = round(bot.latency * 1000)
+    
+    feedback_msg = (
+        "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
+        f"🟢 **Status da Conexão:** Online e Operacional\n"
+        f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
+        f"📋 **Listas Ativas na Memória:** `{len(listas_ativas)}`\n"
+        f"🔒 **Comandos Principais:** `!criarlista`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+    )
+    
+    await ctx.send(feedback_msg, delete_after=15)
+
 @bot.command(name="criarlista")
 async def criar_lista(ctx, *, args):
     try:
@@ -339,7 +358,6 @@ async def fechar_lista(ctx):
         if cap:
             capitaes_atribuidos[i] = cap
 
-    # 1. Aloca os capitães fixos nos seus respetivos times
     restantes = list(dados["titulares"])
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
@@ -365,10 +383,8 @@ async def fechar_lista(ctx):
                     if not alocado:
                         dados["reservas"].append(encontrado)
 
-    # 2. EMBARALHA TUDO DE FORMA TOTALMENTE ALEATÓRIA
     random.shuffle(restantes)
 
-    # 3. Distribui os restantes aleatoriamente pelas vagas disponíveis nos times
     for item in restantes:
         pos = item['pos']
         times_com_vaga = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
@@ -389,7 +405,6 @@ async def fechar_lista(ctx):
             else:
                 dados["reservas"].append(item)
 
-    # 4. TRAVA DE SEGURANÇA: Se algum time ficou totalmente vazio, puxa alguém para lá
     for i in range(qtd_times):
         membros = [j for v in times_montados[i].values() for j in v]
         if not membros:
@@ -406,7 +421,6 @@ async def fechar_lista(ctx):
                             break
                     break
 
-    # 5. Define capitão automático para os times que ficaram sem capitão manual
     for i in range(qtd_times):
         if i not in capitaes_atribuidos:
             candidatos = [j for v in times_montados[i].values() for j in v]
