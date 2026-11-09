@@ -57,7 +57,6 @@ def extrair_id(texto):
 
 def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, times_draft=None):
     if times_draft:
-        # Se o draft estiver a ser montado, exibe o painel interativo dos times
         embed = discord.Embed(
             title=f"📋 {titulo.upper()} (DRAFT EM ANDAMENTO)",
             description=f"⚽ **Formação:** `{esquema}` | **Foco:** `{categoria}`\n👥 **Inscritos Totais:** `{len(titulares) + len(reservas)}`\n\u200b",
@@ -82,7 +81,6 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
             restantes_str = ", ".join([item['user'] for item in titulares])
             embed.add_field(name="⏳ DISPONÍVEIS PARA ESCOLHA", value=restantes_str, inline=False)
     else:
-        # Painel padrão de inscrições
         embed = discord.Embed(
             title=f"📋 {titulo.upper()}",
             description=f"⚽ **Formação:** `{esquema}` | **Foco:** `{categoria}`\n👥 **Titulares:** `{len(titulares)}` | ⏳ **Reservas:** `{len(reservas)}`\n\u200b",
@@ -248,7 +246,6 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- COMANDO DE TESTE ---
 @bot.command(name="teste")
 async def teste(ctx):
     try:
@@ -303,7 +300,6 @@ async def criar_lista(ctx, *, args):
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
 
-# --- NOVO: COMANDO PARA SORTEAR CAPITÃES ---
 @bot.command(name="sorteiocapitao")
 async def sorteiocapitao(ctx, qtd_times: int = 2):
     msg_id = None
@@ -320,23 +316,22 @@ async def sorteiocapitao(ctx, qtd_times: int = 2):
         return
 
     dados = listas_ativas[msg_id]
-    todos_inscritos = dados["titulares"] + dados["reservas"]
+    
+    # Junta titulares e reservas para garantir que todos os inscritos participam do sorteio
+    todos_inscritos = list(dados["titulares"]) + list(dados["reservas"])
 
     if len(todos_inscritos) < qtd_times:
-        await ctx.send(f"⚠️ Não há jogadores suficientes inscritos para sortear {qtd_times} capitães!")
+        await ctx.send(f"⚠️ Jogadores insuficientes! Há {len(todos_inscritos)} inscrito(s) na lista e você pediu para sortear {qtd_times} capitães.")
         return
 
-    # Sorteia aleatoriamente os capitães entre os inscritos
     capitaes_sorteados = random.sample(todos_inscritos, qtd_times)
     
     for i in range(qtd_times):
         dados["capitaes"][i] = capitaes_sorteados[i]['user']
 
-    # Inicializa a estrutura de times para o Draft
     config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
     dados["times_draft"] = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
 
-    # Remove os capitães da lista de disponíveis
     uids_capitaes = [extrair_id(c['user']) for c in capitaes_sorteados]
     dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) not in uids_capitaes]
     dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) not in uids_capitaes]
@@ -352,7 +347,6 @@ async def sorteiocapitao(ctx, qtd_times: int = 2):
         pass
     await ctx.send(f"👑 **{qtd_times} Capitães sorteados com sucesso!** Já podem começar a escolher os jogadores com o comando `!escolher`.", delete_after=10)
 
-# --- NOVO: COMANDO PARA ESCOLHER JOGADOR MANUALMENTE (LEITURA AUTOMÁTICA DE POSIÇÃO) ---
 @bot.command(name="escolher", aliases=["add"])
 async def escolher(ctx, member: discord.Member, *, time_alvo_str):
     msg_id = None
@@ -373,7 +367,6 @@ async def escolher(ctx, member: discord.Member, *, time_alvo_str):
         await ctx.send("⚠️ O sorteio de capitães ainda não foi realizado! Use `!sorteiocapitao` primeiro.")
         return
 
-    # Descobre o índice do time alvo (ex: "Time 2" -> índice 1)
     time_idx = -1
     for idx, nome_t in enumerate(NOMES_TIMES):
         if nome_t.lower() in time_alvo_str.lower():
@@ -387,14 +380,12 @@ async def escolher(ctx, member: discord.Member, *, time_alvo_str):
     user_id = member.id
     alvo_encontrado = None
 
-    # Procura nos titulares
     for item in dados["titulares"]:
         if extrair_id(item['user']) == user_id:
             alvo_encontrado = item
             dados["titulares"].remove(item)
             break
 
-    # Se não estiver nos titulares, procura nos reservas
     if not alvo_encontrado:
         for item in dados["reservas"]:
             if extrair_id(item['user']) == user_id:
@@ -403,13 +394,10 @@ async def escolher(ctx, member: discord.Member, *, time_alvo_str):
                 break
 
     if not alvo_encontrado:
-        await ctx.send(f"⚠️ O jogador {member.mention} não foi encontrado na lista de inscritos!")
+        await ctx.send(f"⚠️ O jogador {member.mention} não foi encontrado na lista de disponíveis!")
         return
 
     pos = alvo_encontrado['pos']
-    config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
-
-    # Encaixa o jogador automaticamente na posição exata dele no time escolhido
     dados["times_draft"][time_idx][pos].append(alvo_encontrado['user'])
 
     channel = bot.get_channel(dados["channel_id"])
@@ -491,7 +479,6 @@ async def fechar_lista(ctx):
         msg = await channel.fetch_message(msg_id)
         await msg.edit(view=None)
 
-        # Se o draft foi feito, usa os times montados pelo draft. Senão, faz o sorteio aleatório tradicional.
         if dados.get("times_draft"):
             times_montados = dados["times_draft"]
             qtd_times = len(times_montados)
