@@ -357,7 +357,7 @@ async def fechar_lista(ctx):
         if cap:
             capitaes_atribuidos[i] = cap
 
-    # 1. Aloca os capitães fixos nos seus respetivos times
+    # 1. Aloca os capitães fixos nos seus respectivos times
     restantes = list(dados["titulares"])
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
@@ -383,26 +383,33 @@ async def fechar_lista(ctx):
                     if not alocado:
                         dados["reservas"].append(encontrado)
 
-    # 2. EMBARALHA TUDO DE FORMA TOTALMENTE ALEATÓRIA
+    # 2. EMBARALHA TUDO DE FORMA ALEATÓRIA
     random.shuffle(restantes)
 
-    # 3. Distribui os restantes aleatoriamente pelas vagas disponíveis nos times
+    # 3. DISTRIBUIÇÃO EQUILIBRADA ENTRE OS TIMES ATIVOS
+    # Garante que os times recebam a mesma quantidade de jogadores distribuída igualmente
     for item in restantes:
         pos = item['pos']
-        times_com_vaga = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
         
-        if times_com_vaga:
-            t_escolhido = random.choice(times_com_vaga)
+        # Procura times com vaga na exata posição do jogador
+        times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
+        
+        if times_com_vaga_pos:
+            # Dentro dos times com vaga na posição, prioriza o time que tem MENOS jogadores no total (equilíbrio)
+            times_com_vaga_pos.sort(key=lambda t: sum(len(lst) for lst in times_montados[t].values()))
+            t_escolhido = times_com_vaga_pos[0]
             times_montados[t_escolhido][pos].append(item['user'])
         else:
-            vagas_livres_geral = []
+            # Se a posição exata estiver cheia em todos, busca qualquer vaga livre priorizando o time com menos jogadores
+            vagas_livres = []
             for i in range(qtd_times):
                 for p in config_formacao.keys():
                     if len(times_montados[i][p]) < config_formacao[p]:
-                        vagas_livres_geral.append((i, p))
+                        vagas_livres.append((i, p))
             
-            if vagas_livres_geral:
-                t_escolhido, p_escolhida = random.choice(vagas_livres_geral)
+            if vagas_livres:
+                vagas_livres.sort(key=lambda item_vaga: sum(len(lst) for lst in times_montados[item_vaga[0]].values()))
+                t_escolhido, p_escolhida = vagas_livres[0]
                 times_montados[t_escolhido][p_escolhida].append(item['user'])
             else:
                 dados["reservas"].append(item)
@@ -439,7 +446,7 @@ async def fechar_lista(ctx):
         msg = await channel.fetch_message(msg_id)
         await msg.edit(view=None)
 
-        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES CONVOCADOS COM SORTEIO ALEATÓRIO)!**\n\n"
+        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - EQUILIBRADOS E SORTEADOS)!**\n\n"
 
         for idx in range(qtd_times):
             nome_time = NOMES_TIMES[idx]
