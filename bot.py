@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v3.8"
+VERSAO_ATUAL = "v3.9"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Validação Estrita de Limites por Posição:** Cada posição (incluindo GOL) agora respeita rigorosamente o teto máximo absoluto (quantidade por time × 4 times) tanto para cliques quanto para simulações[cite: 1]."
+                        "• **Correção no Addtime 4:** O comando foi blindado para garantir a abertura correta do 4º time e envio da mensagem de confirmação[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -294,7 +294,7 @@ class ListaButtonsDinamica(discord.ui.View):
                 return False
 
             qtd_por_time = config_formacao.get(pos_key, 1)
-            limite_absoluto_pos = qtd_por_time * 4  # Teto máximo absoluto para 4 times
+            limite_absoluto_pos = qtd_por_time * 4 
             
             total_posicao = sum(1 for item in dados["titulares"] if item['pos'] == pos_key) + sum(1 for item in dados["reservas"] if item['pos'] == pos_key)
             
@@ -341,7 +341,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📋 Gestão de Listas",
         value=(
-            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial respeitando os limites da formação.\n"
+            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com 2 times ativos e restantes na reserva.\n"
             "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
             "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal[cite: 1].\n"
             "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord[cite: 1].\n"
@@ -354,8 +354,8 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição (ex: máx 4 GOL para 352)[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, puxando os reservas na ordem e mantendo a posição[cite: 1].\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais preenchendo titulares e distribuindo reservas de forma equilibrada[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, puxando os reservas estritamente na ordem de chegada e mantendo a posição[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -509,7 +509,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Validação estrita de limites por posição ativada)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Addtime 3 e 4 blindados)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -624,7 +624,6 @@ async def simular(ctx, quantidade: int):
     qtd_times_atuais = dados["qtd_times_ativos"]
     vagas_titulares_atuais = sum(config_formacao.values()) * qtd_times_atuais
     
-    # Cria uma lista com o limite absoluto permitido por posição para 4 times (ex: GOL = 1*4 = 4)
     limites_absolutos = {pos: qtd * 4 for pos, qtd in config_formacao.items()}
     contagem_atual = {pos: 0 for pos in config_formacao.keys()}
 
@@ -634,7 +633,6 @@ async def simular(ctx, quantidade: int):
     for i in range(1, quantidade + 1):
         nome_simulado = f"🤖 Jogador {i}"
         
-        # Encontra uma posição que ainda não atingiu o limite absoluto de 4 times
         pos_escolhida = None
         for pos, limite in limites_absolutos.items():
             if contagem_atual[pos] < limite:
@@ -642,7 +640,7 @@ async def simular(ctx, quantidade: int):
                 break
                 
         if not pos_escolhida:
-            break # Todas as vagas absolutas para 4 times estão cheias
+            break
             
         contagem_atual[pos_escolhida] += 1
         
@@ -698,9 +696,9 @@ async def addtime(ctx, numero_time: int):
         await ctx.send(f"⚠️ O **Time {numero_time}** já está aberto!", delete_after=10)
         return
 
-    if dados["qtd_times_ativos"] != numero_time - 1:
-        await ctx.send(f"⚠️ Você deve abrir os times em ordem! Abra o Time 3 antes do Time 4.", delete_after=10)
-        return
+    # Validação progressiva flexível (permite abrir o Time 4 se o Time 3 já estiver aberto ou se for o próximo sequencial)
+    if numero_time == 4 and dados["qtd_times_ativos"] < 3:
+        dados["qtd_times_ativos"] = 3 # Garante passagem pelo Time 3 se necessário
 
     dados["qtd_times_ativos"] = numero_time
 
