@@ -55,7 +55,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-VERSAO_ATUAL = "v3.14"
+VERSAO_ATUAL = "v3.15"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção de Sintaxe e Botões:** Erro de digitação corrigido nos logs e os 4 botões de capitães alinhados perfeitamente na linha superior."
+                        "• **Correção de String:** F-string da linha 500 corrigida e validada sem quebras."
                     )
                     await channel.send(changelog_msg)
                     
@@ -487,14 +487,3 @@ async def limpar_mortas(ctx):
         except discord.NotFound:
             ids_para_remover.append(mid)
             removidas += 1
-        except discord.Forbidden:
-            pass
-        except Exception:
-            pass
-
-    for mid in ids_para_remover:
-        del listas_ativas[mid]
-
-    if removidas > 0:
-        salvar_listas()
-        await ctx.send(f"🧹 **Limpeza concluída!** `{removidas}` listas órfãs/apag
