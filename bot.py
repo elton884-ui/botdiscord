@@ -32,7 +32,7 @@ listas_ativas = {}
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.8.2"
+VERSAO_ATUAL = "v1.8.4"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,7 +52,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Regra de Capitães por Times:** Com 2 times ativos, capitães são estritamente titulares. Apenas no 3º/4º time os reservas podem ser capitães[cite: 1]."
+                        "• **Comando `!listasativas` Direto no Canal de Avisos:** Agora o comando envia o resumo de treinos abertos diretamente no canal de avisos configurado[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -228,7 +228,6 @@ class ListaButtonsDinamica(discord.ui.View):
                 await interaction.response.send_message(f"⚠️ Você precisa estar na lista para ser capitão do **{nome_t}**!", ephemeral=True)
                 return False
 
-            # REGRA: Se houver apenas 2 times ativos, capitão tem de ser obrigatoriamente titular
             if qtd_times_ativos <= 2 and not jogador_esta_nos_titulares(dados["titulares"], user_id):
                 await interaction.response.send_message(f"⚠️ Com apenas 2 times ativos, apenas jogadores **titulares** podem ser capitães!", ephemeral=True)
                 return False
@@ -298,8 +297,9 @@ async def comandos(ctx):
         name="📋 Gestão de Listas",
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
+            "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, aloca capitães respeitando a regra de titulares e sorteia os times[cite: 1]."
+            "`!fecharlista`\n> Encerra as inscrições, aloca capitães e sorteia os times[cite: 1]."
         ),
         inline=False
     )
@@ -326,6 +326,46 @@ async def comandos(ctx):
     embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
     await ctx.send(embed=embed)
 
+@bot.command(name="listasativas", aliases=["ativas"])
+async def listas_ativas_cmd(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    abertas = {mid: dados for mid, dados in listas_ativas.items() if not dados["fechada"]}
+
+    if not abertas:
+        await ctx.send("⚠️ Não há nenhuma lista de convocação aberta no momento!", delete_after=10)
+        return
+
+    embed = discord.Embed(
+        title="📋 CONVOCAÇÕES ABERTAS — ROIPIAU FC",
+        description=f"Total de listas ativas na memória: `{len(abertas)}`\n\u200b",
+        color=discord.Color.gold()
+    )
+
+    for mid, dados in abertas.items():
+        canal = bot.get_channel(dados["channel_id"])
+        nome_canal = f"<#{dados['channel_id']}>" if canal else "Canal desconhecido"
+        
+        info_txt = (
+            f"🏟️ **Canal:** {nome_canal}\n"
+            f"⚽ **Formação:** `{dados['esquema']}` | **Foco:** `{dados['categoria']}`\n"
+            f"👥 **Titulares Inscritos:** `{len(dados['titulares'])}` | ⏳ **Reservas:** `{len(dados['reservas'])}`\n"
+            f"🔗 [Ir para a Mensagem da Lista](https://discord.com/channels/{ctx.guild.id}/{dados['channel_id']}/{mid})"
+        )
+        embed.add_field(name=f"📌 {dados['titulo']}", value=info_txt, inline=False)
+
+    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
+
+    # Envia o resultado direto no canal de avisos configurado
+    canal_aviso = bot.get_channel(CANAL_AVISO_ID)
+    if canal_aviso:
+        await canal_aviso.send(embed=embed)
+    else:
+        await ctx.send(embed=embed)
+
 @bot.command(name="teste")
 async def teste(ctx):
     try:
@@ -340,7 +380,7 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas na Memória:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
@@ -506,7 +546,6 @@ async def addtime(ctx, numero_time: int):
     dados["qtd_times_ativos"] = numero_time
     time_idx = numero_time - 1
 
-    # Regra: Para o 3º e 4º time, prioriza reservas se houver, senão titulares
     candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
     
     if candidatos_cap:
@@ -606,7 +645,6 @@ async def fechar_lista(ctx):
 
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
-    # --- ALOCAÇÃO DE CAPITÃES (Titulares e Reservas validados) ---
     restantes = list(dados["titulares"])
     reservas_disponiveis = list(dados["reservas"])
 
@@ -617,14 +655,12 @@ async def fechar_lista(ctx):
             encontrado = None
             origem = None
 
-            # Procura nos titulares
             for item in restantes:
                 if extrair_id(item['user']) == cap_id:
                     encontrado = item
                     origem = "titular"
                     break
             
-            # Se não estiver nos titulares, procura nos reservas (válido para time 3 ou 4)
             if not encontrado:
                 for item in reservas_disponiveis:
                     if extrair_id(item['user']) == cap_id:
@@ -653,10 +689,8 @@ async def fechar_lista(ctx):
 
     dados["reservas"] = reservas_disponiveis
 
-    # 2. Embaralha restantes
     random.shuffle(restantes)
 
-    # 3. Distribuição equilibrada
     for item in restantes:
         pos = item['pos']
         times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
@@ -679,7 +713,6 @@ async def fechar_lista(ctx):
             else:
                 dados["reservas"].append(item)
 
-    # 4. Trava de segurança
     for i in range(qtd_times):
         membros = [j for v in times_montados[i].values() for j in v]
         if not membros:
@@ -696,7 +729,6 @@ async def fechar_lista(ctx):
                             break
                     break
 
-    # 5. Capitão automático de segurança
     for i in range(qtd_times):
         if i not in capitaes_atribuidos or not capitaes_atribuidos[i]:
             candidatos = [j for v in times_montados[i].values() for j in v]
