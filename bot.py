@@ -28,6 +28,22 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
 
+# Canal do Discord onde o bot vai avisar que reiniciou/atualizou
+CANAL_AVISO_ID = 1520235517923299469
+
+@bot.event
+async def on_ready():
+    print(f"Bot conectado como {bot.user}!")
+    
+    # Envia a mensagem automática no canal configurado ao ligar/reiniciar
+    if CANAL_AVISO_ID:
+        channel = bot.get_channel(CANAL_AVISO_ID)
+        if channel:
+            try:
+                await channel.send("🤖 **RoiPau FC Bot** reiniciado e atualizado com sucesso! Pronto para gerenciar as listas! ⚽🔥")
+            except Exception as e:
+                print(f"Erro ao enviar mensagem de aviso no canal: {e}")
+
 FORMAGOES = {
     "352":  {"GOL": 1, "ZAG": 3, "VOL": 2, "ALA": 2, "MEI": 1, "ATA": 2},
     "433":  {"GOL": 1, "LAT": 2, "ZAG": 2, "VOL": 1, "MEI": 2, "ATA": 3},
@@ -558,7 +574,7 @@ async def fechar_lista(ctx):
             nome_time = NOMES_TIMES[idx]
             capitao = capitaes_atribuidos.get(idx, "*Nenhum*")
 
-            # MUDANÇA AQUI: Organiza os jogadores em formato de lista vertical (uma linha por posição/jogador)
+            # Mantém a listagem na vertical (uma linha por posição/jogador)
             membros_linhas = []
             for pos, lista_jogadores in times_montados[idx].items():
                 emoji = POS_EMOJIS.get(pos, "⚽")
