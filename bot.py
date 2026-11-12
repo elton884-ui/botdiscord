@@ -2,7 +2,7 @@ import os
 import re
 import random
 from threading import Thread
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
 
@@ -15,7 +15,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
 Thread(target=run_web_server, daemon=True).start()
@@ -28,6 +28,7 @@ intents.reactions = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
+aviso_inicializado = False
 
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
@@ -102,10 +103,11 @@ NOMES_TIMES = ["Time 1", "Time 2", "Time 3", "Time 4"]
 EMOJIS_CAP = ["👑", "🎗️", "⭐", "🌟"]
 
 def extrair_id(texto):
+    """Extrai apenas IDs reais de menções do Discord, nunca números de nomes."""
     if not texto:
         return None
-    match = re.search(r'\d+', str(texto))
-    return int(match.group()) if match else None
+    match = re.fullmatch(r'<@!?(\d+)>', str(texto).strip())
+    return int(match.group(1)) if match else None
 
 def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos=2):
     embed = discord.Embed(
@@ -138,7 +140,21 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
             jogador_nome = ocupantes_pos[i]['user'] if i < len(ocupantes_pos) else "*Vago*"
             linhas_vagas.append(f"{emoji} `{pos}{num_str}:` {jogador_nome}")
 
-    embed.add_field(name="👥 QUADRO DE INSCRITOS", value="\n".join(linhas_vagas), inline=False)
+    # Campos do Discord aceitam no máximo 1024 caracteres cada.
+    texto_vagas = "\n".join(linhas_vagas)
+    partes_vagas = []
+    parte_atual = ""
+    for linha in texto_vagas.splitlines():
+        if len(parte_atual) + len(linha) + 1 > 1000 and parte_atual:
+            partes_vagas.append(parte_atual)
+            parte_atual = ""
+        parte_atual += ("\n" if parte_atual else "") + linha
+    if parte_atual:
+        partes_vagas.append(parte_atual)
+
+    for indice, parte in enumerate(partes_vagas):
+        nome_campo = "👥 QUADRO DE INSCRITOS" if indice == 0 else "\u200b"
+        embed.add_field(name=nome_campo, value=parte, inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
     if reservas:
@@ -146,13 +162,48 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
         for idx, res in enumerate(reservas, start=1):
             emoji = POS_EMOJIS.get(res['pos'], "⚽")
             linhas_res.append(f"`{idx}.` {emoji} `{res['pos']}` — {res['user']}")
-        val_reservas = "\n".join(linhas_res)
-    else:
-        val_reservas = "*Nenhum reserva no momento.*"
 
-    embed.add_field(name="⏳ LISTA DE SUPLENTES / RESERVAS", value=val_reservas, inline=False)
+        texto_reservas = "\n".join(linhas_res)
+        partes_reservas = []
+        parte_atual = ""
+        for linha in texto_reservas.splitlines():
+            if len(parte_atual) + len(linha) + 1 > 1000 and parte_atual:
+                partes_reservas.append(parte_atual)
+                parte_atual = ""
+            parte_atual += ("\n" if parte_atual else "") + linha
+        if parte_atual:
+            partes_reservas.append(parte_atual)
+    else:
+        partes_reservas = ["*Nenhum reserva no momento.*"]
+
+    for indice, parte in enumerate(partes_reservas):
+        nome_campo = "⏳ LISTA DE SUPLENTES / RESERVAS" if indice == 0 else "\u200b"
+        embed.add_field(name=nome_campo, value=parte, inline=False)
+
     embed.set_footer(text="Clique nos botões abaixo para preencher a vaga ou use os comandos progressivos!")
     return embed
+
+async def enviar_mensagem_em_partes(destino, mensagem, limite=1900):
+    """Envia textos longos em partes sem ultrapassar o limite do Discord."""
+    partes = []
+    atual = ""
+    for linha in mensagem.splitlines(keepends=True):
+        if len(atual) + len(linha) > limite and atual:
+            partes.append(atual)
+            atual = ""
+        while len(linha) > limite:
+            if atual:
+                partes.append(atual)
+                atual = ""
+            partes.append(linha[:limite])
+            linha = linha[limite:]
+        atual += linha
+    if atual:
+        partes.append(atual)
+
+    for parte in partes:
+        await destino.send(parte)
+
 
 def jogador_ja_esta_na_lista(titulares, reservas, target_id):
     for item in titulares:
@@ -350,7 +401,14 @@ async def criar_lista(ctx, *, args):
 
     try:
         params = [p.strip() for p in args.split(";")]
+        if len(params) != 6:
+            raise ValueError("Informe os seis campos do formato.")
         esquema, categoria, titulo, _, _, _ = params
+
+        if esquema not in FORMAGOES:
+            raise ValueError(f"Formação inválida: {esquema}")
+        if not categoria or not titulo:
+            raise ValueError("Foco e título são obrigatórios.")
 
         titulares = []
         reservas = []
@@ -375,7 +433,7 @@ async def criar_lista(ctx, *, args):
             "qtd_times_ativos": qtd_times_ativos
         }
     except Exception:
-        await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
+        await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1` (formações: 352, 433, 442, 4231 ou 532).")
 
 @bot.command(name="limpar")
 async def limpar(ctx):
@@ -444,6 +502,10 @@ async def simular(ctx, quantidade: int):
     titulares = []
     reservas = []
 
+    if quantidade < 0 or quantidade > 100:
+        await ctx.send("⚠️ Informe uma quantidade entre 0 e 100.", delete_after=10)
+        return
+
     for i in range(1, quantidade + 1):
         nome_simulado = f"🤖 Jogador {i}"
         if posicoes_disponiveis:
@@ -502,16 +564,15 @@ async def addtime(ctx, numero_time: int):
     dados["qtd_times_ativos"] = numero_time
     time_idx = numero_time - 1
 
-    candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
-    
+    # O capitão continua inscrito; a função de capitão não remove ninguém do elenco.
+    candidatos_cap = [
+        item for item in dados["titulares"] + dados["reservas"]
+        if extrair_id(item["user"]) is not None
+    ]
+
     if candidatos_cap:
         sorteado = random.choice(candidatos_cap)
-        dados["capitaes"][time_idx] = sorteado['user']
-        
-        if sorteado in dados["reservas"]:
-            dados["reservas"].remove(sorteado)
-        elif sorteado in dados["titulares"]:
-            dados["titulares"].remove(sorteado)
+        dados["capitaes"][time_idx] = sorteado["user"]
     else:
         dados["capitaes"][time_idx] = "*Nenhum (Sem jogadores disponíveis)*"
 
@@ -590,28 +651,42 @@ async def fechar_lista(ctx):
         return
 
     dados = listas_ativas[msg_id]
-    dados["fechada"] = True
 
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     qtd_times = dados["qtd_times_ativos"]
 
-    # --- AUTO-PREENCHIMENTO DE VAGAS VAZIAS COM BOTS ---
-    vagas_totais_necessarias = []
-    for pos, qtd_por_time in config_formacao.items():
-        for _ in range(qtd_por_time * qtd_times):
-            vagas_totais_necessarias.append(pos)
+    # Capitães que estavam na reserva são promovidos para titulares antes
+    # do preenchimento automático, pois também fazem parte do elenco.
+    for cap_str in dados["capitaes"].values():
+        cap_id = extrair_id(cap_str)
+        if cap_id is None:
+            continue
+        reserva_cap = next(
+            (item for item in dados["reservas"] if extrair_id(item["user"]) == cap_id),
+            None
+        )
+        if reserva_cap:
+            dados["reservas"].remove(reserva_cap)
+            dados["titulares"].append(reserva_cap)
 
+    # --- AUTO-PREENCHIMENTO POR POSIÇÃO ---
+    # Conta as vagas de cada posição individualmente; a ordem das inscrições
+    # não pode determinar a posição dos jogadores virtuais.
     bot_counter = 1
-    while len(dados["titulares"]) < len(vagas_totais_necessarias):
-        pos_faltando = vagas_totais_necessarias[len(dados["titulares"])]
-        dados["titulares"].append({"user": f"🤖 Jogador Bot {bot_counter}", "pos": pos_faltando})
-        bot_counter += 1
+    for pos, qtd_por_time in config_formacao.items():
+        limite_pos = qtd_por_time * qtd_times
+        ocupadas = sum(1 for item in dados["titulares"] if item["pos"] == pos)
+        while ocupadas < limite_pos:
+            dados["titulares"].append({
+                "user": f"🤖 Jogador Bot {bot_counter}",
+                "pos": pos
+            })
+            bot_counter += 1
+            ocupadas += 1
 
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
     capitaes_atribuidos = dados["capitaes"]
-
-    todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
     # 1. Aloca os capitães fixos humanos
     restantes = list(dados["titulares"])
@@ -675,12 +750,17 @@ async def fechar_lista(ctx):
                 times_montados[i][p].append(puxado['user'])
             else:
                 for outro_i in range(qtd_times):
+                    if outro_i == i:
+                        continue
+                    movido_encontrado = False
                     for p, lista_j in times_montados[outro_i].items():
                         if len(lista_j) > 1:
                             movido = lista_j.pop()
                             times_montados[i][p].append(movido)
+                            movido_encontrado = True
                             break
-                    break
+                    if movido_encontrado:
+                        break
 
     # 5. Capitão automático de segurança
     for i in range(qtd_times):
@@ -696,7 +776,6 @@ async def fechar_lista(ctx):
     channel = bot.get_channel(dados["channel_id"])
     try:
         msg = await channel.fetch_message(msg_id)
-        await msg.edit(view=None)
 
         mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - COMPLETO COM BOTS, EQUILIBRADOS E SORTEADOS)!**\n\n"
 
@@ -721,18 +800,24 @@ async def fechar_lista(ctx):
             res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
             mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
 
-        await ctx.send(mensagem_escalacao)
+        await enviar_mensagem_em_partes(ctx, mensagem_escalacao)
+        await msg.edit(view=None)
+        dados["fechada"] = True
 
         canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
         if canal_escalacao:
-            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
+            participantes_reais = [
+                item["user"] for item in dados["titulares"] + dados["reservas"]
+                if extrair_id(item["user"]) is not None
+            ]
+            participantes_str = ", ".join(participantes_reais) if participantes_reais else "*Nenhum participante*"
             relatorio_msg = (
                 f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
                 f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
-                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
+                f"👥 **Participantes ({len(participantes_reais)}):** {participantes_str}\n\n"
                 f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
             )
-            await canal_escalacao.send(relatorio_msg)
+            await enviar_mensagem_em_partes(canal_escalacao, relatorio_msg)
 
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
