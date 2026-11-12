@@ -29,10 +29,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.8"
+VERSAO_ATUAL = "v1.8.1"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,8 +52,8 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Fechamento Real:** Removido o preenchimento automático por bots; agora o `!fecharlista` organiza apenas os jogadores reais inscritos[cite: 1].\n"
-                        "• **Simulação Isolada:** Bots mantidos exclusivamente para o comando `!simular`[cite: 1]."
+                        "• **Correção de Capitães:** O bot agora localiza o capitão corretamente (seja nos titulares ou reservas) e garante a escalação dele no time[cite: 1].\n"
+                        "• **Fechamento Real:** Organiza os jogadores reais inscritos e envia o resumo no canal de escalações[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -295,7 +295,7 @@ async def comandos(ctx):
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, sorteia os times reais e envia o resumo no canal de escalações[cite: 1]."
+            "`!fecharlista`\n> Encerra as inscrições, aloca capitães (reais/reservas) com segurança e sorteia os times[cite: 1]."
         ),
         inline=False
     )
@@ -601,19 +601,38 @@ async def fechar_lista(ctx):
 
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
-    # 1. Aloca os capitães fixos
+    # --- CORREÇÃO ROBUSTA DE CAPITÃES (Titulares + Reservas) ---
     restantes = list(dados["titulares"])
+    reservas_disponiveis = list(dados["reservas"])
+
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
         if cap_str:
             cap_id = extrair_id(cap_str)
             encontrado = None
+            origem = None  # "titular" ou "reserva"
+
+            # Procura primeiro nos titulares
             for item in restantes:
                 if extrair_id(item['user']) == cap_id:
                     encontrado = item
+                    origem = "titular"
                     break
+            
+            # Se não estiver nos titulares, procura nos reservas
+            if not encontrado:
+                for item in reservas_disponiveis:
+                    if extrair_id(item['user']) == cap_id:
+                        encontrado = item
+                        origem = "reserva"
+                        break
+
             if encontrado:
-                restantes.remove(encontrado)
+                if origem == "titular":
+                    restantes.remove(encontrado)
+                else:
+                    reservas_disponiveis.remove(encontrado)
+
                 pos = encontrado['pos']
                 if len(times_montados[i][pos]) < config_formacao[pos]:
                     times_montados[i][pos].append(encontrado['user'])
@@ -625,7 +644,10 @@ async def fechar_lista(ctx):
                             alocado = True
                             break
                     if not alocado:
-                        dados["reservas"].append(encontrado)
+                        reservas_disponiveis.append(encontrado)
+
+    # Atualiza a lista de reservas com os que sobraram após puxar os capitães dos reservas
+    dados["reservas"] = reservas_disponiveis
 
     # 2. Embaralha restantes
     random.shuffle(restantes)
