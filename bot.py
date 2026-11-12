@@ -30,10 +30,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 listas_ativas = {}
 
 # Canais do Discord configurados
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
-CANAL_ESCALACAO_ID = 1570429628588499086 # Novo canal dedicado ao histórico de escalações e agradecimentos
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
+CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.6"
+VERSAO_ATUAL = "v1.7"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -53,10 +53,9 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Canal de Escalações Dedicado:** Ao fechar a lista, o bot envia o resumo e o agradecimento a todos os participantes no canal de escalações.\n"
-                        "• **Apagar por Reação:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la automaticamente.\n"
-                        "• **Comando `!limpar`:** Limpa e reseta todos os inscritos da lista ativa.\n"
-                        "• **Comando `!comandos`:** Painel unificado com todos os comandos do bot."
+                        "• **Auto-Preenchimento por Bots:** Ao fechar a lista, o bot preenche automaticamente as vagas vazias restantes com jogadores virtuais, sem tocar nos humanos[cite: 1]!\n"
+                        "• **Canal de Escalações Dedicado:** Envia o resumo e o agradecimento de quem participou no canal de escalações[cite: 1].\n"
+                        "• **Apagar por Reação:** Reaja com `✅` em mensagens do bot no canal de avisos para apagá-las[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -299,7 +298,7 @@ async def comandos(ctx):
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, sorteia os times e envia o resumo no canal de escalações."
+            "`!fecharlista`\n> Encerra as inscrições, completa as vagas vazias com bots, sorteia os times e envia o resumo no canal de escalações[cite: 1]."
         ),
         inline=False
     )
@@ -318,7 +317,7 @@ async def comandos(ctx):
         name="🛠️ Sistema & Diagnóstico",
         value=(
             "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
-            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente!"
+            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente[cite: 1]!"
         ),
         inline=False
     )
@@ -600,139 +599,27 @@ async def fechar_lista(ctx):
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     qtd_times = dados["qtd_times_ativos"]
 
+    # --- AUTO-PREENCHIMENTO DE VAGAS VAZIAS COM BOTS ---
+    # Verifica quais vagas exatas existem no total para todos os times ativos
+    vagas_totais_necessarias = []
+    for pos, qtd_por_time in config_formacao.items():
+        for _ in range(qtd_por_time * qtd_times):
+            vagas_totais_necessarias.append(pos)
+
+    # Se faltarem titulares para completar o total de vagas, preenche as vagas vazias com bots
+    bot_counter = 1
+    while len(dados["titulares"]) < len(vagas_totais_necessarias):
+        # Descobre qual a posição que está a faltar
+        pos_faltando = vagas_totais_necessarias[len(dados["titulares"])]
+        dados["titulares"].append({"user": f"🤖 Jogador Bot {bot_counter}", "pos": pos_faltando})
+        bot_counter += 1
+
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
     capitaes_atribuidos = dados["capitaes"]
 
-    # Coleta todos os participantes únicos para o agradecimento final
+    # Coleta todos os participantes únicos para o relatório de agradecimento
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
-    # 1. Aloca os capitães fixos
+    # 1. Aloca os capitães fixos humanos
     restantes = list(dados["titulares"])
-    for i in range(qtd_times):
-        cap_str = capitaes_atribuidos.get(i)
-        if cap_str:
-            cap_id = extrair_id(cap_str)
-            encontrado = None
-            for item in restantes:
-                if extrair_id(item['user']) == cap_id:
-                    encontrado = item
-                    break
-            if encontrado:
-                restantes.remove(encontrado)
-                pos = encontrado['pos']
-                if len(times_montados[i][pos]) < config_formacao[pos]:
-                    times_montados[i][pos].append(encontrado['user'])
-                else:
-                    alocado = False
-                    for p in config_formacao.keys():
-                        if len(times_montados[i][p]) < config_formacao[p]:
-                            times_montados[i][p].append(encontrado['user'])
-                            alocado = True
-                            break
-                    if not alocado:
-                        dados["reservas"].append(encontrado)
-
-    # 2. Embaralha restantes
-    random.shuffle(restantes)
-
-    # 3. Distribuição equilibrada
-    for item in restantes:
-        pos = item['pos']
-        times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
-        
-        if times_com_vaga_pos:
-            times_com_vaga_pos.sort(key=lambda t: sum(len(lst) for lst in times_montados[t].values()))
-            t_escolhido = times_com_vaga_pos[0]
-            times_montados[t_escolhido][pos].append(item['user'])
-        else:
-            vagas_livres = []
-            for i in range(qtd_times):
-                for p in config_formacao.keys():
-                    if len(times_montados[i][p]) < config_formacao[p]:
-                        vagas_livres.append((i, p))
-            
-            if vagas_livres:
-                vagas_livres.sort(key=lambda item_vaga: sum(len(lst) for lst in times_montados[item_vaga[0]].values()))
-                t_escolhido, p_escolhida = vagas_livres[0]
-                times_montados[t_escolhido][p_escolhida].append(item['user'])
-            else:
-                dados["reservas"].append(item)
-
-    # 4. Trava de segurança
-    for i in range(qtd_times):
-        membros = [j for v in times_montados[i].values() for j in v]
-        if not membros:
-            if dados["reservas"]:
-                puxado = dados["reservas"].pop(0)
-                p = puxado['pos']
-                times_montados[i][p].append(puxado['user'])
-            else:
-                for outro_i in range(qtd_times):
-                    for p, lista_j in times_montados[outro_i].items():
-                        if len(lista_j) > 1:
-                            movido = lista_j.pop()
-                            times_montados[i][p].append(movido)
-                            break
-                    break
-
-    # 5. Capitão automático de segurança
-    for i in range(qtd_times):
-        if i not in capitaes_atribuidos or not capitaes_atribuidos[i]:
-            candidatos = [j for v in times_montados[i].values() for j in v]
-            if candidatos:
-                sorteado = random.choice(candidatos)
-                capitaes_atribuidos[i] = sorteado
-            else:
-                capitaes_atribuidos[i] = "*Nenhum*"
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        await msg.edit(view=None)
-
-        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - EQUILIBRADOS E SORTEADOS)!**\n\n"
-
-        for idx in range(qtd_times):
-            nome_time = NOMES_TIMES[idx]
-            capitao = capitaes_atribuidos.get(idx, "*Nenhum*")
-
-            membros_linhas = []
-            for pos, lista_jogadores in times_montados[idx].items():
-                emoji = POS_EMOJIS.get(pos, "⚽")
-                for j in lista_jogadores:
-                    membros_linhas.append(f"> {emoji} **{pos}:** {j}")
-
-            elenco_str = "\n".join(membros_linhas) if membros_linhas else "> *Nenhum jogador*"
-
-            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
-            mensagem_escalacao += f"👥 **Elenco:**\n{elenco_str}\n"
-            mensagem_escalacao += f"🔊 **Call:** Entrar na call do **{nome_time}**\n"
-            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-
-        if dados["reservas"]:
-            res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
-            mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
-
-        # Envia a escalação no canal onde a lista estava ativa
-        await ctx.send(mensagem_escalacao)
-
-        # --- ENVIA O RELATÓRIO E AGRADECIMENTO NO CANAL SEPARADO DE ESCALAÇÕES ---
-        canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
-        if canal_escalacao:
-            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
-            relatorio_msg = (
-                f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
-                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
-                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
-                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
-            )
-            await canal_escalacao.send(relatorio_msg)
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada!")
-else:
-    bot.run(TOKEN)
+    for i in range
