@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v2.2.2"
+VERSAO_ATUAL = "v2.3"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção de Sintaxe:** Todas as strings e blocos de comandos foram alinhados e validados[cite: 1, 4]."
+                        "• **Quadro de Inscritos Otimizado:** Melhor organização visual das vagas por posição e suporte refinado para múltiplos times[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -756,60 +756,46 @@ async def fechar_lista(ctx):
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     qtd_times = dados["qtd_times_ativos"]
 
+    # --- CORREÇÃO DE DISTRIBUIÇÃO E EQUILÍBRIO POR TIME ---
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
     capitaes_atribuidos = {int(k): v for k, v in dados["capitaes"].items()}
 
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
-    restantes = list(dados["titulares"])
-    reservas_disponiveis = list(dados["reservas"])
-
+    # Unifica todos para fazer a distribuição perfeita por posições exatas por time
+    todos_candidatos = list(dados["titulares"]) + list(dados["reservas"])
+    
+    # Primeiro, aloca os capitães se definidos
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
         if cap_str:
             cap_id = extrair_id(cap_str)
             encontrado = None
-            origem = None
-
-            for item in restantes:
+            for item in todos_candidatos:
                 if extrair_id(item['user']) == cap_id:
                     encontrado = item
-                    origem = "titular"
                     break
-            
-            if not encontrado:
-                for item in reservas_disponiveis:
-                    if extrair_id(item['user']) == cap_id:
-                        encontrado = item
-                        origem = "reserva"
-                        break
-
             if encontrado:
-                if origem == "titular":
-                    restantes.remove(encontrado)
-                else:
-                    reservas_disponiveis.remove(encontrado)
-
+                todos_candidatos.remove(encontrado)
                 pos = encontrado['pos']
                 if len(times_montados[i][pos]) < config_formacao[pos]:
                     times_montados[i][pos].append(encontrado['user'])
                 else:
+                    # Encontra outra vaga no mesmo time
                     alocado = False
                     for p in config_formacao.keys():
                         if len(times_montados[i][p]) < config_formacao[p]:
                             times_montados[i][p].append(encontrado['user'])
                             alocado = True
                             break
-                    if not alocado:
-                        reservas_disponiveis.append(encontrado)
 
-    dados["reservas"] = reservas_disponiveis
-    salvar_listas()
+    # Distribui o restante respeitando estritamente a formação por time
+    novos_reservas = []
+    random.shuffle(todos_candidatos)
 
-    random.shuffle(restantes)
-
-    for item in restantes:
+    for item in todos_candidatos:
         pos = item['pos']
+        # Procura time com vaga exata na posição
         times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
         
         if times_com_vaga_pos:
@@ -817,6 +803,7 @@ async def fechar_lista(ctx):
             t_escolhido = times_com_vaga_pos[0]
             times_montados[t_escolhido][pos].append(item['user'])
         else:
+            # Procura qualquer vaga livre em qualquer posição no time com menos jogadores
             vagas_livres = []
             for i in range(qtd_times):
                 for p in config_formacao.keys():
@@ -828,30 +815,17 @@ async def fechar_lista(ctx):
                 t_escolhido, p_escolhida = vagas_livres[0]
                 times_montados[t_escolhido][p_escolhida].append(item['user'])
             else:
-                dados["reservas"].append(item)
+                novos_reservas.append(item)
 
-    for i in range(qtd_times):
-        membros = [j for v in times_montados[i].values() for j in v]
-        if not membros:
-            if dados["reservas"]:
-                puxado = dados["reservas"].pop(0)
-                p = puxado['pos']
-                times_montados[i][p].append(puxado['user'])
-            else:
-                for outro_i in range(qtd_times):
-                    for p, lista_j in times_montados[outro_i].items():
-                        if len(lista_j) > 1:
-                            movido = lista_j.pop()
-                            times_montados[i][p].append(movido)
-                            break
-                    break
+    dados["reservas"] = novos_reservas
+    salvar_listas()
 
+    # Define capitães automáticos se faltar algum
     for i in range(qtd_times):
-        if i not in capitaes_atribuidos or not capitaes_atribuidos[i]:
+        if i not in capitaes_atribuidos or not capitaes_atribuidos[i] or "*A definir" in str(capitaes_atribuidos[i]):
             candidatos = [j for v in times_montados[i].values() for j in v]
             if candidatos:
-                sorteado = random.choice(candidatos)
-                capitaes_atribuidos[i] = sorteado
+                capitaes_atribuidos[i] = random.choice(candidatos)
             else:
                 capitaes_atribuidos[i] = "*Nenhum*"
 
