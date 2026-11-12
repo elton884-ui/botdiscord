@@ -29,10 +29,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
 
-# Canal do Discord onde o bot envia os avisos e relatórios
-CANAL_AVISO_ID = 1570420721312866436
+# Canais do Discord configurados
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
+CANAL_ESCALACAO_ID = 1570429628588499086 # Novo canal dedicado ao histórico de escalações e agradecimentos
 
-VERSAO_ATUAL = "v1.5"
+VERSAO_ATUAL = "v1.6"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,10 +53,10 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Apagar por Reação:** Reaja com `✅` em qualquer mensagem do bot no canal de relatórios para apagá-la automaticamente.\n"
+                        "• **Canal de Escalações Dedicado:** Ao fechar a lista, o bot envia o resumo e o agradecimento a todos os participantes no canal de escalações.\n"
+                        "• **Apagar por Reação:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la automaticamente.\n"
                         "• **Comando `!limpar`:** Limpa e reseta todos os inscritos da lista ativa.\n"
-                        "• **Comando `!comandos`:** Painel unificado com todos os comandos do bot.\n"
-                        "• **Comando `!simular [qtd]`:** Cria jogadores virtuais para testar lotação[cite: 1]."
+                        "• **Comando `!comandos`:** Painel unificado com todos os comandos do bot."
                     )
                     await channel.send(changelog_msg)
                     
@@ -67,22 +68,17 @@ async def on_ready():
             except Exception as e:
                 print(f"Erro ao enviar mensagem de aviso no canal: {e}")
 
-# --- NOVO EVENTO: APAGAR MENSAGEM AO REAGIR COM VERIFICADO ---
+# --- EVENTO: APAGAR MENSAGEM AO REAGIR COM VERIFICADO ---
 @bot.event
 async def on_raw_reaction_add(payload):
-    # Ignora reações dadas por bots (incluindo o próprio bot)
     if payload.user_id == bot.user.id:
         return
 
-    # Verifica se a reação foi no canal de relatórios/avisos configurado
     if payload.channel_id == CANAL_AVISO_ID:
-        # Verifica se o emoji usado foi o de verificado (✅)
         if str(payload.emoji) == "✅":
             try:
                 channel = bot.get_channel(payload.channel_id)
                 message = await channel.fetch_message(payload.message_id)
-                
-                # Apaga a mensagem se ela pertencer ao bot
                 if message.author.id == bot.user.id:
                     await message.delete()
             except Exception as e:
@@ -303,7 +299,7 @@ async def comandos(ctx):
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, equilibra e sorteia os times na vertical."
+            "`!fecharlista`\n> Encerra as inscrições, sorteia os times e envia o resumo no canal de escalações."
         ),
         inline=False
     )
@@ -322,7 +318,7 @@ async def comandos(ctx):
         name="🛠️ Sistema & Diagnóstico",
         value=(
             "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
-            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de relatórios para apagá-la instantaneamente!"
+            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente!"
         ),
         inline=False
     )
@@ -607,6 +603,9 @@ async def fechar_lista(ctx):
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
     capitaes_atribuidos = dados["capitaes"]
 
+    # Coleta todos os participantes únicos para o agradecimento final
+    todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
+
     # 1. Aloca os capitães fixos
     restantes = list(dados["titulares"])
     for i in range(qtd_times):
@@ -664,9 +663,9 @@ async def fechar_lista(ctx):
         membros = [j for v in times_montados[i].values() for j in v]
         if not membros:
             if dados["reservas"]:
-               puxado = dados["reservas"].pop(0)
-               p = puxado['pos']
-               times_montados[i][p].append(puxado['user'])
+                puxado = dados["reservas"].pop(0)
+                p = puxado['pos']
+                times_montados[i][p].append(puxado['user'])
             else:
                 for outro_i in range(qtd_times):
                     for p, lista_j in times_montados[outro_i].items():
@@ -714,7 +713,20 @@ async def fechar_lista(ctx):
             res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
             mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
 
+        # Envia a escalação no canal onde a lista estava ativa
         await ctx.send(mensagem_escalacao)
+
+        # --- ENVIA O RELATÓRIO E AGRADECIMENTO NO CANAL SEPARADO DE ESCALAÇÕES ---
+        canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
+        if canal_escalacao:
+            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
+            relatorio_msg = (
+                f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
+                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
+                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
+                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
+            )
+            await canal_escalacao.send(relatorio_msg)
 
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
