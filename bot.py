@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v3.0"
+VERSAO_ATUAL = "v3.1"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Ajuste de Elenco (11 por Time):** Validação corrigida para somar exatamente 1 goleiro + 10 jogadores de linha por equipe nas formações[cite: 1]."
+                        "• **Correção no Addtime 3 e 4:** Remoção de sorteio automático prévio de capitão; os capitães ficam livres para escolha até o fechamento da lista[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -177,7 +177,7 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
         val_reservas = "*Nenhum reserva no momento.*"
 
     embed.add_field(name="⏳ LISTA DE SUPLENTES / RESERVAS", value=val_reservas, inline=False)
-    embed.set_footer(text="Elenco oficial de 11 jogadores por equipe (1 GOL + 10 de linha)!")
+    embed.set_footer(text="Clique nos botões abaixo para preencher a vaga ou escolher os capitães!")
     return embed
 
 class ListaButtonsDinamica(discord.ui.View):
@@ -279,7 +279,7 @@ class ListaButtonsDinamica(discord.ui.View):
                 return False
 
             qtd_por_time = config_formacao.get(pos_key, 1)
-            limite_absoluto_pos = qtd_por_time * 4 # Teto para 4 times
+            limite_absoluto_pos = qtd_por_time * 4 
             
             total_posicao = sum(1 for item in dados["titulares"] if item['pos'] == pos_key) + sum(1 for item in dados["reservas"] if item['pos'] == pos_key)
             
@@ -340,7 +340,7 @@ async def comandos(ctx):
         name="⚙️ Comandos Avançados & Simulação",
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando os limites máximos por posição[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, aloca capitão e puxa reservas para as vagas abertas[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e preenche vagas com reservas sem definir capitães automaticamente[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -482,7 +482,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Elenco de 11 por equipe validado)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Addtime corrigido para não sortear capitães)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -503,7 +503,7 @@ async def criar_lista(ctx, *, args):
 
         titulares = []
         reservas = []
-        capitaes = {0: None, 1: None}
+        capitaes = {0: None, 1: None, 2: None, 3: None}
         qtd_times_ativos = 2
 
         view = ListaButtonsDinamica(esquema, qtd_times=qtd_times_ativos)
@@ -550,7 +550,7 @@ async def limpar(ctx):
     dados = listas_ativas[msg_id]
     dados["titulares"] = []
     dados["reservas"] = []
-    dados["capitaes"] = {i: None for i in range(dados["qtd_times_ativos"])}
+    dados["capitaes"] = {i: None for i in range(4)}
     salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
@@ -653,16 +653,8 @@ async def addtime(ctx, numero_time: int):
         return
 
     dados["qtd_times_ativos"] = numero_time
-    time_idx = numero_time - 1
-    capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
 
-    candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
-    if candidatos_cap:
-        sorteado = random.choice(candidatos_cap)
-        capitaes_dict[time_idx] = sorteado['user']
-
-    dados["capitaes"] = capitaes_dict
-
+    # Preenche automaticamente as novas vagas do quadro com os reservas da fila
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     vagas_totais_titulares = sum(config_formacao.values()) * dados["qtd_times_ativos"]
@@ -684,7 +676,7 @@ async def addtime(ctx, numero_time: int):
         dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
     )
     await msg.edit(embed=novo_embed, view=nova_view)
-    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Vagas e botão de capitão gerados com sucesso.", delete_after=12)
+    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Vagas preenchidas e botões atualizados com sucesso.", delete_after=12)
 
 @bot.command(name="remover")
 async def remover(ctx, member: discord.Member = None):
@@ -764,6 +756,7 @@ async def fechar_lista(ctx):
     todos_candidatos = list(dados["titulares"]) + list(dados["reservas"])
     todos_participantes = [item['user'] for item in todos_candidatos]
 
+    # --- PASSO 1: PROCESSA E ALOCA TODOS OS CAPITÃES ESCOLHIDOS MANUALMENTE ANTES DE FECHAR ---
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
         if cap_str and "*A definir" not in str(cap_str) and "*Nenhum" not in str(cap_str):
@@ -788,6 +781,7 @@ async def fechar_lista(ctx):
                     if not alocado_alt:
                         todos_candidatos.append(encontrado)
 
+    # --- PASSO 2: DISTRIBUI O RESTANTE DE FORMA EQUILIBRADA ---
     random.shuffle(todos_candidatos)
     novos_reservas = []
 
