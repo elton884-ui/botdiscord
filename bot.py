@@ -55,7 +55,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-VERSAO_ATUAL = "v3.13"
+VERSAO_ATUAL = "v3.14"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -68,18 +68,18 @@ async def on_ready():
             try:
                 ultima_versao = ""
                 if os.path.exists(ARQUIVO_VERSAO):
-                    with open(ARQUIVO_VERSAO, "r", encoding="utf-8") as f:
+                    with open(ARQUIVO_VERSAO, "r") as f:
                         ultima_versao = f.read().strip()
                 
                 if ultima_versao != VERSAO_ATUAL:
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Alinhamento Perfeito dos 4 Capitães:** Todos os botões de capitães (1 a 4) agora cabem perfeitamente na primeira linha do painel, garantindo a exibição do Time 4."
+                        "• **Correção de Sintaxe e Botões:** Erro de digitação corrigido nos logs e os 4 botões de capitães alinhados perfeitamente na linha superior."
                     )
                     await channel.send(changelog_msg)
                     
-                    with open(ARQUIVO_VERSAO, "w" as f):
+                    with open(ARQUIVO_VERSAO, "w") as f:
                         f.write(VERSAO_ATUAL)
                 else:
                     await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando normalmente! ⚽🔥")
@@ -184,11 +184,10 @@ class ListaButtonsDinamica(discord.ui.View):
     def __init__(self, esquema, qtd_times=2):
         super().__init__(timeout=None)
         
-        # Adiciona TODOS os 4 botões de capitães na linha 0 (o Discord aceita até 5 botões por linha)
+        # Adiciona os 4 botões de capitães na linha 0 (Time 1, 2, 3 e 4)
         for i in range(4):
             nome_t = NOMES_TIMES[i]
             emoji_cap = EMOJIS_CAP[i]
-            # Desativa visualmente ou restringe pelo código se o time ainda não estiver ativo
             style = discord.ButtonStyle.primary if i < qtd_times else discord.ButtonStyle.secondary
             self.add_item(discord.ui.Button(
                 label=f"Cap. {nome_t}", 
@@ -198,7 +197,7 @@ class ListaButtonsDinamica(discord.ui.View):
                 row=0
             ))
 
-        # Botão de sair fica na linha 1
+        # Botão de sair na linha 1
         self.add_item(discord.ui.Button(
             label="Sair da Lista", 
             emoji="❌", 
@@ -207,4 +206,295 @@ class ListaButtonsDinamica(discord.ui.View):
             row=1
         ))
 
-# O resto do código permanece o vivo e funcional
+        # Botões de posições nas linhas seguintes
+        config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
+        row_curr = 2
+        count_in_row = 0
+        
+        for pos in config_formacao.keys():
+            emoji = POS_EMOJIS.get(pos, "⚽")
+            btn = discord.ui.Button(label=pos, emoji=emoji, style=discord.ButtonStyle.secondary, custom_id=f"btn_pos_{pos}", row=row_curr)
+            self.add_item(btn)
+            count_in_row += 1
+            if count_in_row >= 4:
+                row_curr += 1
+                count_in_row = 0
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        msg_id = interaction.message.id
+        if msg_id not in listas_ativas:
+            await interaction.response.send_message("⚠️ Esta lista expirou na memória do bot. Crie uma nova com !criarlista.", ephemeral=True)
+            return False
+
+        dados = listas_ativas[msg_id]
+        if dados["fechada"]:
+            await interaction.response.send_message("🔒 Esta lista já está fechada!", ephemeral=True)
+            return False
+
+        custom_id = interaction.data["custom_id"]
+        user_mention = interaction.user.mention
+        user_id = interaction.user.id
+
+        config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
+        qtd_times_ativos = dados["qtd_times_ativos"]
+        capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
+
+        if custom_id.startswith("btn_cap_time"):
+            time_idx = int(custom_id.replace("btn_cap_time", "")) - 1
+            if time_idx >= qtd_times_ativos:
+                await interaction.response.send_message(f"⚠️ O Time {time_idx+1} ainda não está aberto!", ephemeral=True)
+                return False
+
+            nome_t = NOMES_TIMES[time_idx]
+
+            if not jogador_ja_esta_na_lista(dados["titulares"], dados["reservas"], user_id):
+                await interaction.response.send_message(f"⚠️ Você precisa estar na lista para ser capitão do **{nome_t}**!", ephemeral=True)
+                return False
+
+            cap_atual_id = extrair_id(capitaes_dict.get(time_idx))
+
+            if cap_atual_id == user_id:
+                capitaes_dict[time_idx] = None
+            elif cap_atual_id is not None:
+                await interaction.response.send_message(f"⚠️ O **{nome_t}** já tem um capitão definido!", ephemeral=True)
+                return False
+            else:
+                for k in list(capitaes_dict.keys()):
+                    if extrair_id(capitaes_dict.get(k)) == user_id:
+                        capitaes_dict[k] = None
+                capitaes_dict[time_idx] = user_mention
+
+            dados["capitaes"] = capitaes_dict
+
+        elif custom_id == "btn_sair":
+            usuario_removido = None
+            for item in dados["titulares"]:
+                if extrair_id(item['user']) == user_id:
+                    usuario_removido = item
+                    break
+            
+            dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) != user_id]
+            dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) != user_id]
+            
+            if usuario_removido:
+                pos_vaga = usuario_removido['pos']
+                for idx, res in enumerate(dados["reservas"]):
+                    if res['pos'] == pos_vaga:
+                        promovido = dados["reservas"].pop(idx)
+                        dados["titulares"].append(promovido)
+                        break
+
+            for k, v in list(capitaes_dict.items()):
+                if extrair_id(v) == user_id:
+                    capitaes_dict[k] = None
+            dados["capitaes"] = capitaes_dict
+
+        elif custom_id.startswith("btn_pos_"):
+            pos_key = custom_id.replace("btn_pos_", "")
+            
+            if jogador_ja_esta_na_lista(dados["titulares"], dados["reservas"], user_id):
+                await interaction.response.send_message("⚠️ Você já está inscrito nesta lista!", ephemeral=True)
+                return False
+
+            qtd_por_time = config_formacao.get(pos_key, 1)
+            limite_absoluto_pos = qtd_por_time * 4 
+            
+            total_posicao = sum(1 for item in dados["titulares"] if item['pos'] == pos_key) + sum(1 for item in dados["reservas"] if item['pos'] == pos_key)
+            
+            if total_posicao >= limite_absoluto_pos:
+                await interaction.response.send_message(f"⚠️ A posição **{pos_key}** já atingiu o limite máximo absoluto de inscrições ({limite_absoluto_pos} jogadores para 4 times)!", ephemeral=True)
+                return False
+
+            limite_titulares_pos = qtd_por_time * qtd_times_ativos
+            ocupantes_pos = [item for item in dados["titulares"] if item['pos'] == pos_key]
+
+            if len(ocupantes_pos) < limite_titulares_pos:
+                dados["titulares"].append({"user": user_mention, "pos": pos_key})
+            else:
+                dados["reservas"].append({"user": user_mention, "pos": pos_key})
+
+        salvar_listas()
+
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], 
+            dados["esquema"], 
+            dados["categoria"], 
+            dados["titulares"], 
+            dados["reservas"],
+            dados["capitaes"],
+            dados["qtd_times_ativos"]
+        )
+
+        await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
+        return True
+
+@bot.command(name="comandos")
+async def comandos(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    embed = discord.Embed(
+        title="⚽ PAINEL DE COMANDOS — ROIPIAU FC",
+        description="Lista completa de comandos e funcionalidades oficiais para gerenciar os treinos e campeonatos:\n\u200b",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="📋 Gestão de Listas",
+        value=(
+            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com 2 times ativos e restantes na reserva.\n"
+            "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas.\n"
+            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal.\n"
+            "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord.\n"
+            "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
+            "`!fecharlista`\n> Encerra as inscrições, processa capitães, sorteia os times e programa limpeza de 24h."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚙️ Comandos Avançados & Simulação",
+        value=(
+            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
+            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🛠️ Sistema & Diagnóstico",
+        value=(
+            "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
+            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente!"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
+    await ctx.send(embed=embed)
+
+@bot.command(name="listasativas", aliases=["ativas"])
+async def listas_ativas_cmd(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    abertas = {mid: dados for mid, dados in listas_ativas.items() if not dados["fechada"]}
+
+    if not abertas:
+        await ctx.send("⚠️ Não há nenhuma lista de convocação aberta no momento!", delete_after=10)
+        return
+
+    embed = discord.Embed(
+        title="📋 CONVOCAÇÕES ABERTAS — ROIPIAU FC",
+        description=f"Total de listas ativas salvas: `{len(abertas)}`\n\u200b",
+        color=discord.Color.gold()
+    )
+
+    for mid, dados in abertas.items():
+        canal = bot.get_channel(dados["channel_id"])
+        nome_canal = f"<#{dados['channel_id']}>" if canal else "Canal desconhecido"
+        
+        info_txt = (
+            f"🏟️ **Canal:** {nome_canal}\n"
+            f"⚽ **Formação:** `{dados['esquema']}` | **Foco:** `{dados['categoria']}`\n"
+            f"👥 **Titulares Inscritos:** `{len(dados['titulares'])}` | ⏳ **Reservas:** `{len(dados['reservas'])}`\n"
+            f"🔗 [Ir para a Mensagem da Lista](https://discord.com/channels/{ctx.guild.id}/{dados['channel_id']}/{mid})"
+        )
+        embed.add_field(name=f"📌 {dados['titulo']}", value=info_txt, inline=False)
+
+    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
+
+    canal_aviso = bot.get_channel(CANAL_AVISO_ID)
+    if canal_aviso:
+        await canal_aviso.send(embed=embed)
+    else:
+        await ctx.send(embed=embed)
+
+@bot.command(name="reabrir", aliases=["restaurar"])
+async def reabrir_lista(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg_id_alvo = None
+    dados_alvo = None
+    for mid, dados in reversed(list(listas_ativas.items())):
+        if dados["channel_id"] == ctx.channel.id:
+            msg_id_alvo = mid
+            dados_alvo = dados
+            break
+
+    if not msg_id_alvo or not dados_alvo:
+        await ctx.send("⚠️ Nenhuma lista encontrada neste canal para restaurar!", delete_after=10)
+        return
+
+    dados_alvo["fechada"] = False
+    nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
+    dados_alvo["view"] = nova_view
+
+    channel = bot.get_channel(dados_alvo["channel_id"])
+    
+    try:
+        msg = await channel.fetch_message(msg_id_alvo)
+        novo_embed = gerar_embed_dinamico(
+            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
+            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=nova_view)
+        await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!**", delete_after=12)
+    except (discord.NotFound, discord.HTTPException):
+        novo_embed = gerar_embed_dinamico(
+            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
+            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
+        )
+        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
+        
+        del listas_ativas[msg_id_alvo]
+        listas_ativas[nova_msg.id] = dados_alvo
+        salvar_listas()
+        
+        await ctx.send(f"🔄 **A mensagem anterior tinha sido apagada!** Recriei a lista atualizada com sucesso.", delete_after=12)
+    
+    salvar_listas()
+
+@bot.command(name="limparmortas")
+async def limpar_mortas(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    removidas = 0
+    ids_para_remover = []
+
+    for mid, dados in list(listas_ativas.items()):
+        canal_id = dados.get("channel_id")
+        canal = bot.get_channel(canal_id)
+        
+        if not canal:
+            ids_para_remover.append(mid)
+            removidas += 1
+            continue
+            
+        try:
+            await canal.fetch_message(mid)
+        except discord.NotFound:
+            ids_para_remover.append(mid)
+            removidas += 1
+        except discord.Forbidden:
+            pass
+        except Exception:
+            pass
+
+    for mid in ids_para_remover:
+        del listas_ativas[mid]
+
+    if removidas > 0:
+        salvar_listas()
+        await ctx.send(f"🧹 **Limpeza concluída!** `{removidas}` listas órfãs/apag
