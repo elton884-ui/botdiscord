@@ -32,7 +32,7 @@ listas_ativas = {}
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.7.1"
+VERSAO_ATUAL = "v1.7.2"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,7 +52,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção de Sintaxe:** Ajuste interno concluído para garantir estabilidade total ao fechar listas com bots[cite: 1, 5]!\n"
+                        "• **Correção de Linha Longa:** Ajuste no fechamento de strings para estabilidade total[cite: 1, 6].\n"
                         "• **Auto-Preenchimento por Bots:** Vagas vazias preenchidas automaticamente ao fechar a lista[cite: 1]."
                     )
                     await channel.send(changelog_msg)
@@ -691,11 +691,4 @@ async def fechar_lista(ctx):
                 capitaes_atribuidos[i] = sorteado
             else:
                 candidatos_gerais = [j for v in times_montados[i].values() for j in v]
-                capitaes_atribuidos[i] = random.choice(candidatos_gerais) if candidatos_gerais else "*Nenhum*"
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        await msg.edit(view=None)
-
-        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - COMPLETO COM BOTS, EQUILIBRADOS E SOR
+                capitaes_atribuidos[i] = random.choice(candidatos_gerais) if candidatos_gerais else "*N
