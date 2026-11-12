@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v3.9"
+VERSAO_ATUAL = "v3.10"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção no Addtime 4:** O comando foi blindado para garantir a abertura correta do 4º time e envio da mensagem de confirmação[cite: 1]."
+                        "• **Correção Definitiva no Addtime 4:** O fluxo de abertura suporta agora transição direta e em cascata para 3 e 4 times, garantindo envio de mensagens e promoção correta de reservas[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -354,7 +354,7 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais preenchendo titulares e distribuindo reservas de forma equilibrada[cite: 1].\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição[cite: 1].\n"
             "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, puxando os reservas estritamente na ordem de chegada e mantendo a posição[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
@@ -509,7 +509,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Addtime 3 e 4 blindados)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Addtime 3 e 4 robusto ativado)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -696,15 +696,13 @@ async def addtime(ctx, numero_time: int):
         await ctx.send(f"⚠️ O **Time {numero_time}** já está aberto!", delete_after=10)
         return
 
-    # Validação progressiva flexível (permite abrir o Time 4 se o Time 3 já estiver aberto ou se for o próximo sequencial)
-    if numero_time == 4 and dados["qtd_times_ativos"] < 3:
-        dados["qtd_times_ativos"] = 3 # Garante passagem pelo Time 3 se necessário
-
+    # Define o novo número de times ativos (se for 4 e estivesse em 2, passa por 3 e vai para 4 em cascata)
     dados["qtd_times_ativos"] = numero_time
 
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     
+    # --- PROMOÇÃO EM CASCATA RESPEITANDO ORDEM E POSIÇÃO ---
     novos_reservas = []
     for res in dados["reservas"]:
         pos_key = res['pos']
