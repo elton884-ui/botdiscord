@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v3.3"
+VERSAO_ATUAL = "v3.6"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção na Simulação para 4 Times:** Ajuste na distribuição de jogadores virtuais para suportar até 44 cadastros simultâneos[cite: 1]."
+                        "• **Puxada de Reservas por Ordem e Posição:** Os reservas agora são promovidos a titulares estritamente na ordem em que entraram na fila e mantendo a mesma posição[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -264,8 +264,25 @@ class ListaButtonsDinamica(discord.ui.View):
             dados["capitaes"] = capitaes_dict
 
         elif custom_id == "btn_sair":
+            # --- REMOÇÃO INTELIGENTE DE VAGAS E REORGANIZAÇÃO DE RESERVAS ---
+            usuario_removido = None
+            for item in dados["titulares"]:
+                if extrair_id(item['user']) == user_id:
+                    usuario_removido = item
+                    break
+            
             dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) != user_id]
             dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) != user_id]
+            
+            # Se alguém saiu dos titulares, promove o primeiro reserva DA MESMA POSIÇÃO na ordem de chegada
+            if usuario_removido:
+                pos_vaga = usuario_removido['pos']
+                for idx, res in enumerate(dados["reservas"]):
+                    if res['pos'] == pos_vaga:
+                        promovido = dados["reservas"].pop(idx)
+                        dados["titulares"].append(promovido)
+                        break
+
             for k, v in list(capitaes_dict.items()):
                 if extrair_id(v) == user_id:
                     capitaes_dict[k] = None
@@ -326,9 +343,9 @@ async def comandos(ctx):
     embed.add_field(
         name="📋 Gestão de Listas",
         value=(
-            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
+            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com 2 times ativos e restantes na reserva.\n"
             "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
-            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal (recriando-a se tiver sido apagada)[cite: 1].\n"
+            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal[cite: 1].\n"
             "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord[cite: 1].\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
             "`!fecharlista`\n> Encerra as inscrições, processa capitães, sorteia os times e programa limpeza de 24h[cite: 1]."
@@ -339,8 +356,8 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais distribuindo dinamicamente pelo teto de 4 times[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e preenche vagas com reservas sem definir capitães[cite: 1].\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais preenchendo titulares e jogando o excedente para reservas em ordem[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, puxando os reservas estritamente na ordem de chegada e mantendo a posição[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -494,7 +511,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Simulação dinâmica de 4 times corrigida)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Puxada de reservas por ordem e posição ativada)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -516,7 +533,7 @@ async def criar_lista(ctx, *, args):
         titulares = []
         reservas = []
         capitaes = {0: None, 1: None, 2: None, 3: None}
-        qtd_times_ativos = 2
+        qtd_times_ativos = 2  # Começa sempre com 2 times ativos
 
         view = ListaButtonsDinamica(esquema, qtd_times=qtd_times_ativos)
         embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos)
@@ -562,8 +579,12 @@ async def limpar(ctx):
     dados = listas_ativas[msg_id]
     dados["titulares"] = []
     dados["reservas"] = []
+    dados["qtd_times_ativos"] = 2
     dados["capitaes"] = {i: None for i in range(4)}
     salvar_listas()
+
+    nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=2)
+    dados["view"] = nova_view
 
     channel = bot.get_channel(dados["channel_id"])
     try:
@@ -572,11 +593,11 @@ async def limpar(ctx):
             dados["titulo"], dados["esquema"], dados["categoria"], 
             dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
         )
-        await msg.edit(embed=novo_embed, view=dados.get("view"))
+        await msg.edit(embed=novo_embed, view=nova_view)
     except Exception:
         pass
     
-    await ctx.send("🧹 **Lista limpa com sucesso!** Todos os inscritos e capitães foram resetados.", delete_after=10)
+    await ctx.send("🧹 **Lista limpa com sucesso!** Todos os inscritos, reservas e capitães foram resetados.", delete_after=10)
 
 @bot.command(name="simular")
 async def simular(ctx, quantidade: int):
@@ -602,12 +623,12 @@ async def simular(ctx, quantidade: int):
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     
-    # Preenche o quadro considerando o limite máximo de 4 times ativos na simulação (44 jogadores titulares)
-    vagas_maximas_titulares = sum(config_formacao.values()) * 4
+    qtd_times_atuais = dados["qtd_times_ativos"]
+    vagas_titulares_atuais = sum(config_formacao.values()) * qtd_times_atuais
     
     posicoes_disponiveis = []
     for pos, qtd in config_formacao.items():
-        for _ in range(qtd * 4):
+        for _ in range(qtd * qtd_times_atuais):
             posicoes_disponiveis.append(pos)
 
     titulares = []
@@ -615,13 +636,19 @@ async def simular(ctx, quantidade: int):
 
     for i in range(1, quantidade + 1):
         nome_simulado = f"🤖 Jogador {i}"
-        if posicoes_disponiveis:
-            pos = posicoes_disponiveis.pop(0)
-            titulares.append({"user": nome_simulado, "pos": pos})
+        # Atribui posições cíclicas para simulação fiel
+        pos_simulada = list(config_formacao.keys())[i % len(config_formacao)]
+        
+        if len(titulares) < vagas_titulares_atuais and posicoes_disponiveis:
+            # Tenta pegar na ordem das posições disponíveis dos titulares atuais
+            if pos_simulada in posicoes_disponiveis:
+                posicoes_disponiveis.remove(pos_simulada)
+                titulares.append({"user": nome_simulado, "pos": pos_simulada})
+            else:
+                pos_alt = posicoes_disponiveis.pop(0)
+                titulares.append({"user": nome_simulado, "pos": pos_alt})
         else:
-            pos_res = list(config_formacao.keys())[i % len(config_formacao)]
-            if sum(1 for item in titulares if item['pos'] == pos_res) + sum(1 for item in reservas if item['pos'] == pos_res) < config_formacao[pos_res] * 4:
-                reservas.append({"user": nome_simulado, "pos": pos_res})
+            reservas.append({"user": nome_simulado, "pos": pos_simulada})
 
     dados["titulares"] = titulares
     dados["reservas"] = reservas
@@ -638,7 +665,7 @@ async def simular(ctx, quantidade: int):
     except Exception:
         pass
 
-    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{quantidade}` jogadores virtuais distribuídos pelo teto de 4 times.", delete_after=10)
+    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{quantidade}` jogadores ({len(titulares)} titulares e {len(reservas)} reservas).", delete_after=10)
 
 @bot.command(name="addtime")
 async def addtime(ctx, numero_time: int):
@@ -676,14 +703,24 @@ async def addtime(ctx, numero_time: int):
 
     dados["qtd_times_ativos"] = numero_time
 
+    # --- PUXADA INTELIGENTE: ORDEM DE CHEGADA + POSIÇÃO CORRETA ---
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
-    vagas_totais_titulares = sum(config_formacao.values()) * dados["qtd_times_ativos"]
     
-    while len(dados["titulares"]) < vagas_totais_titulares and dados["reservas"]:
-        puxado = dados["reservas"].pop(0)
-        dados["titulares"].append(puxado)
-
+    novos_reservas = []
+    for res in dados["reservas"]:
+        # Verifica quais posições ainda precisam ser preenchidas no novo quadro de titulares
+        pos_key = res['pos']
+        qtd_por_time = config_formacao.get(pos_key, 1)
+        limite_titulares_pos = qtd_por_time * dados["qtd_times_ativos"]
+        ocupantes_pos_atual = sum(1 for item in dados["titulares"] if item['pos'] == pos_key)
+        
+        if ocupantes_pos_atual < limite_titulares_pos:
+            dados["titulares"].append(res)
+        else:
+            novos_reservas.append(res)
+            
+    dados["reservas"] = novos_reservas
     salvar_listas()
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
@@ -707,7 +744,7 @@ async def addtime(ctx, numero_time: int):
         listas_ativas[nova_msg.id] = dados
         salvar_listas()
 
-    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Vagas preenchidas e botões atualizados com sucesso.", delete_after=12)
+    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Reservas promovidos respeitando a ordem e posição exata.", delete_after=12)
 
 @bot.command(name="remover")
 async def remover(ctx, member: discord.Member = None):
@@ -735,8 +772,24 @@ async def remover(ctx, member: discord.Member = None):
     user_id = member.id
     capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
 
+    # Verifica se o removido era titular para repor com o primeiro reserva da mesma posição
+    usuario_removido = None
+    for item in dados["titulares"]:
+        if extrair_id(item['user']) == user_id:
+            usuario_removido = item
+            break
+
     dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) != user_id]
     dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) != user_id]
+
+    if usuario_removido:
+        pos_vaga = usuario_removido['pos']
+        for idx, res in enumerate(dados["reservas"]):
+            if res['pos'] == pos_vaga:
+                promovido = dados["reservas"].pop(idx)
+                dados["titulares"].append(promovido)
+                break
+
     for k, v in list(capitaes_dict.items()):
         if extrair_id(v) == user_id:
             capitaes_dict[k] = None
