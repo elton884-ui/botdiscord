@@ -280,7 +280,6 @@ async def criar_lista(ctx, *, args):
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
 
-# --- NOVO: COMANDO SIMULAR QUANTIDADE ---
 @bot.command(name="simular")
 async def simular(ctx, quantidade: int):
     try:
@@ -306,26 +305,20 @@ async def simular(ctx, quantidade: int):
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     qtd_times = dados["qtd_times_ativos"]
     
-    vagas_totais_titulares = sum(config_formacao.values()) * qtd_times
-
-    # Lista posições possíveis proporcionalmente
     posicoes_disponiveis = []
     for pos, qtd in config_formacao.items():
         for _ in range(qtd * qtd_times):
             posicoes_disponiveis.append(pos)
 
-    # Preenche com jogadores simulados
     titulares = []
     reservas = []
 
     for i in range(1, quantidade + 1):
         nome_simulado = f"🤖 Jogador {i}"
-        # Escolhe uma posição livre ou joga para reserva se ultrapassar
         if posicoes_disponiveis:
             pos = posicoes_disponiveis.pop(0)
             titulares.append({"user": nome_simulado, "pos": pos})
         else:
-            # Posições extras vão nas posições que sobrarem ciclicamente para os reservas
             pos_res = list(config_formacao.keys())[i % len(config_formacao)]
             reservas.append({"user": nome_simulado, "pos": pos_res})
 
@@ -341,7 +334,6 @@ async def simular(ctx, quantidade: int):
     await msg.edit(embed=novo_embed, view=dados.get("view"))
     await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{quantidade}` jogadores virtuais.", delete_after=10)
 
-# --- NOVO: COMANDO ADICIONAR TIME PROGRESSIVO (addtime 3 / addtime 4) ---
 @bot.command(name="addtime")
 async def addtime(ctx, numero_time: int):
     try:
@@ -376,18 +368,15 @@ async def addtime(ctx, numero_time: int):
         await ctx.send(f"⚠️ Você deve abrir os times em ordem! Abra o Time 3 antes do Time 4.", delete_after=10)
         return
 
-    # Atualiza a quantidade de times ativos
     dados["qtd_times_ativos"] = numero_time
     time_idx = numero_time - 1
 
-    # Sorteia automaticamente o capitão para o novo time entre os reservas (ou titulares caso faltem reservas)
     candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
     
     if candidatos_cap:
         sorteado = random.choice(candidatos_cap)
         dados["capitaes"][time_idx] = sorteado['user']
         
-        # Remove o novo capitão da lista onde ele estava para evitar duplicidade
         if sorteado in dados["reservas"]:
             dados["reservas"].remove(sorteado)
         elif sorteado in dados["titulares"]:
@@ -395,7 +384,6 @@ async def addtime(ctx, numero_time: int):
     else:
         dados["capitaes"][time_idx] = "*Nenhum (Sem jogadores disponíveis)*"
 
-    # Recria a view com os novos botões de capitão atualizados
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
     dados["view"] = nova_view
 
@@ -570,16 +558,17 @@ async def fechar_lista(ctx):
             nome_time = NOMES_TIMES[idx]
             capitao = capitaes_atribuidos.get(idx, "*Nenhum*")
 
-            membros_time = []
+            # MUDANÇA AQUI: Organiza os jogadores em formato de lista vertical (uma linha por posição/jogador)
+            membros_linhas = []
             for pos, lista_jogadores in times_montados[idx].items():
                 emoji = POS_EMOJIS.get(pos, "⚽")
                 for j in lista_jogadores:
-                    membros_time.append(f"{emoji}{pos}: {j}")
+                    membros_linhas.append(f"> {emoji} **{pos}:** {j}")
 
-            mencoes_str = " | ".join(membros_time) if membros_time else "*Nenhum jogador*"
+            elenco_str = "\n".join(membros_linhas) if membros_linhas else "> *Nenhum jogador*"
 
             mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
-            mensagem_escalacao += f"👥 **Elenco:** {mencoes_str}\n"
+            mensagem_escalacao += f"👥 **Elenco:**\n{elenco_str}\n"
             mensagem_escalacao += f"🔊 **Call:** Entrar na call do **{nome_time}**\n"
             mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
 
