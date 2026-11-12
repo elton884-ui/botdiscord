@@ -55,7 +55,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-VERSAO_ATUAL = "v3.11"
+VERSAO_ATUAL = "v3.12"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Atualização Dinâmica de Botões:** Ao usar `!addtime 3` ou `!addtime 4`, os botões dos capitães correspondentes aparecem imediatamente no painel para cliques."
+                        "• **Geração Perfeita de Botões de Capitães:** Correção estrutural na View para renderizar e disponibilizar os botões do Time 3 e Time 4 dinamicamente ao expandir os times."
                     )
                     await channel.send(changelog_msg)
                     
@@ -184,9 +184,11 @@ class ListaButtonsDinamica(discord.ui.View):
     def __init__(self, esquema, qtd_times=2):
         super().__init__(timeout=None)
         
+        # Adiciona os botões de capitães de acordo com a quantidade de times ativos (máx 4)
         for i in range(qtd_times):
             nome_t = NOMES_TIMES[i]
             emoji_cap = EMOJIS_CAP[i]
+            # Distribui nas linhas 0 e 1 do Discord (2 botões por linha)
             row_num = 0 if i < 2 else 1
             self.add_item(discord.ui.Button(
                 label=f"Cap. {nome_t}", 
@@ -196,16 +198,19 @@ class ListaButtonsDinamica(discord.ui.View):
                 row=row_num
             ))
 
+        # Botão de sair fica na linha 1 ou 2 dependendo dos capitães
+        row_sair = 1 if qtd_times <= 2 else 2
         self.add_item(discord.ui.Button(
             label="Sair da Lista", 
             emoji="❌", 
             style=discord.ButtonStyle.danger, 
             custom_id="btn_sair", 
-            row=1
+            row=row_sair
         ))
 
+        # Adiciona os botões de posições logo abaixo
         config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
-        row_curr = 2
+        row_curr = row_sair + 1
         count_in_row = 0
         
         for pos in config_formacao.keys():
@@ -355,7 +360,7 @@ async def comandos(ctx):
         name="⚙️ Comandos Avançados & Simulação",
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e puxando os reservas estritamente na ordem e posição.\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, gerando os botões de capitães correspondentes e promovendo os reservas.\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -509,7 +514,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Atualização dinâmica de botões de capitães ativa)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Geração de botões de capitães corrigida)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -716,7 +721,7 @@ async def addtime(ctx, numero_time: int):
             
     dados["reservas"] = novos_reservas
 
-    # --- ATUALIZAÇÃO DINÂMICA DA VIEW DOS BOTÕES (INCLUINDO OS NOVOS CAPITÃES) ---
+    # --- RECRIAÇÃO DINÂMICA DA VIEW COM OS BOTÕES DOS CAPITÃES ATUALIZADOS ---
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
     dados["view"] = nova_view
     salvar_listas()
