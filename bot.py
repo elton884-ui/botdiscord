@@ -55,7 +55,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v3.1"
+VERSAO_ATUAL = "v3.2"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção no Addtime 3 e 4:** Remoção de sorteio automático prévio de capitão; os capitães ficam livres para escolha até o fechamento da lista[cite: 1]."
+                        "• **Recuperação de Mensagem Apagada:** Se a lista for apagada por engano, o comando `!reabrir` agora recria a mensagem automaticamente sem perder nenhum inscrito[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -328,7 +328,7 @@ async def comandos(ctx):
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
-            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista fechada no canal com os botões ativos[cite: 1].\n"
+            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal (recriando-a se tiver sido apagada)[cite: 1].\n"
             "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord[cite: 1].\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
             "`!fecharlista`\n> Encerra as inscrições, processa capitães, sorteia os times e programa limpeza de 24h[cite: 1]."
@@ -340,7 +340,7 @@ async def comandos(ctx):
         name="⚙️ Comandos Avançados & Simulação",
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando os limites máximos por posição[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e preenche vagas com reservas sem definir capitães automaticamente[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e preenche vagas com reservas sem definir capitães[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -404,34 +404,50 @@ async def reabrir_lista(ctx):
     except Exception:
         pass
 
+    # Procura a última lista fechada ou aberta neste canal
     msg_id_alvo = None
+    dados_alvo = None
     for mid, dados in reversed(list(listas_ativas.items())):
-        if dados["channel_id"] == ctx.channel.id and dados["fechada"]:
+        if dados["channel_id"] == ctx.channel.id:
             msg_id_alvo = mid
+            dados_alvo = dados
             break
 
-    if not msg_id_alvo or msg_id_alvo not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista fechada encontrada neste canal para restaurar!", delete_after=10)
+    if not msg_id_alvo or not dados_alvo:
+        await ctx.send("⚠️ Nenhuma lista encontrada neste canal para restaurar!", delete_after=10)
         return
 
-    dados = listas_ativas[msg_id_alvo]
-    dados["fechada"] = False
-    
-    nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
-    dados["view"] = nova_view
-    salvar_listas()
+    dados_alvo["fechada"] = False
+    nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
+    dados_alvo["view"] = nova_view
 
-    channel = bot.get_channel(dados["channel_id"])
+    channel = bot.get_channel(dados_alvo["channel_id"])
+    
     try:
+        # Tenta encontrar a mensagem original para editá-la
         msg = await channel.fetch_message(msg_id_alvo)
         novo_embed = gerar_embed_dinamico(
-            dados["titulo"], dados["esquema"], dados["categoria"], 
-            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
+            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
         )
         await msg.edit(embed=novo_embed, view=nova_view)
-        await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!** Os botões estão ativos novamente.", delete_after=12)
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao tentar restaurar a mensagem da lista: {e}", delete_after=10)
+        await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!**", delete_after=12)
+    except (discord.NotFound, discord.HTTPException):
+        # Se a mensagem foi apagada, cria uma nova mensagem no chat mantendo todos os inscritos!
+        novo_embed = gerar_embed_dinamico(
+            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
+            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
+        )
+        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
+        
+        # Atualiza o ID na base de dados com o ID da nova mensagem criada
+        del listas_ativas[msg_id_alvo]
+        listas_ativas[nova_msg.id] = dados_alvo
+        salvar_listas()
+        
+        await ctx.send(f"🔄 **A mensagem anterior tinha sido apagada!** Recriei a lista atualizada com sucesso.", delete_after=12)
+    
+    salvar_listas()
 
 @bot.command(name="limparmortas")
 async def limpar_mortas(ctx):
@@ -482,7 +498,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Addtime corrigido para não sortear capitães)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Recuperação automática de mensagens ativada)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -554,12 +570,16 @@ async def limpar(ctx):
     salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
-    msg = await channel.fetch_message(msg_id)
-    novo_embed = gerar_embed_dinamico(
-        dados["titulo"], dados["esquema"], dados["categoria"], 
-        dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-    )
-    await msg.edit(embed=novo_embed, view=dados.get("view"))
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=dados.get("view"))
+    except Exception:
+        pass
+    
     await ctx.send("🧹 **Lista limpa com sucesso!** Todos os inscritos e capitães foram resetados.", delete_after=10)
 
 @bot.command(name="simular")
@@ -610,12 +630,16 @@ async def simular(ctx, quantidade: int):
     salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
-    msg = await channel.fetch_message(msg_id)
-    novo_embed = gerar_embed_dinamico(
-        dados["titulo"], dados["esquema"], dados["categoria"], 
-        dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-    )
-    await msg.edit(embed=novo_embed, view=dados.get("view"))
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=dados.get("view"))
+    except Exception:
+        pass
+
     await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{quantidade}` jogadores virtuais.", delete_after=10)
 
 @bot.command(name="addtime")
@@ -654,7 +678,6 @@ async def addtime(ctx, numero_time: int):
 
     dados["qtd_times_ativos"] = numero_time
 
-    # Preenche automaticamente as novas vagas do quadro com os reservas da fila
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     vagas_totais_titulares = sum(config_formacao.values()) * dados["qtd_times_ativos"]
@@ -669,13 +692,24 @@ async def addtime(ctx, numero_time: int):
     dados["view"] = nova_view
 
     channel = bot.get_channel(dados["channel_id"])
-    msg = await channel.fetch_message(msg_id)
-    
-    novo_embed = gerar_embed_dinamico(
-        dados["titulo"], dados["esquema"], dados["categoria"], 
-        dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-    )
-    await msg.edit(embed=novo_embed, view=nova_view)
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=nova_view)
+    except Exception:
+        # Se a mensagem foi apagada, cria uma nova ao adicionar o time
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
+        del listas_ativas[msg_id]
+        listas_ativas[nova_msg.id] = dados
+        salvar_listas()
+
     await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Vagas preenchidas e botões atualizados com sucesso.", delete_after=12)
 
 @bot.command(name="remover")
@@ -713,9 +747,12 @@ async def remover(ctx, member: discord.Member = None):
     salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
-    msg = await channel.fetch_message(msg_id)
-    novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"])
-    await msg.edit(embed=novo_embed, view=dados.get("view"))
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"])
+        await msg.edit(embed=novo_embed, view=dados.get("view"))
+    except Exception:
+        pass
 
     try:
         await ctx.message.delete()
@@ -756,7 +793,6 @@ async def fechar_lista(ctx):
     todos_candidatos = list(dados["titulares"]) + list(dados["reservas"])
     todos_participantes = [item['user'] for item in todos_candidatos]
 
-    # --- PASSO 1: PROCESSA E ALOCA TODOS OS CAPITÃES ESCOLHIDOS MANUALMENTE ANTES DE FECHAR ---
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
         if cap_str and "*A definir" not in str(cap_str) and "*Nenhum" not in str(cap_str):
@@ -781,7 +817,6 @@ async def fechar_lista(ctx):
                     if not alocado_alt:
                         todos_candidatos.append(encontrado)
 
-    # --- PASSO 2: DISTRIBUI O RESTANTE DE FORMA EQUILIBRADA ---
     random.shuffle(todos_candidatos)
     novos_reservas = []
 
@@ -820,8 +855,11 @@ async def fechar_lista(ctx):
 
     channel = bot.get_channel(dados["channel_id"])
     try:
-        msg = await channel.fetch_message(msg_id)
-        await msg.edit(view=None)
+        try:
+            msg = await channel.fetch_message(msg_id)
+            await msg.edit(view=None)
+        except Exception:
+            pass
 
         mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES DE 11 JOGADORES)!**\n\n"
 
