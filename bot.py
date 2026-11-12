@@ -53,9 +53,9 @@ def salvar_listas():
 listas_ativas = carregar_listas()
 
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
-CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
+CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos
 
-VERSAO_ATUAL = "v2.3"
+VERSAO_ATUAL = "v2.5"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Quadro de Inscritos Otimizado:** Melhor organização visual das vagas por posição e suporte refinado para múltiplos times[cite: 1]."
+                        "• **Preenchimento Dinâmico de Vagas:** Ao adicionar um novo time, os reservas aguardando na fila entram automaticamente para preencher o quadro de inscritos em aberto[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -253,10 +253,6 @@ class ListaButtonsDinamica(discord.ui.View):
                 await interaction.response.send_message(f"⚠️ Você precisa estar na lista para ser capitão do **{nome_t}**!", ephemeral=True)
                 return False
 
-            if qtd_times_ativos <= 2 and not jogador_esta_nos_titulares(dados["titulares"], user_id):
-                await interaction.response.send_message(f"⚠️ Com apenas 2 times ativos, apenas jogadores **titulares** podem ser capitães!", ephemeral=True)
-                return False
-
             cap_atual_id = extrair_id(capitaes_dict.get(time_idx))
 
             if cap_atual_id == user_id:
@@ -340,7 +336,7 @@ async def comandos(ctx):
         name="⚙️ Comandos Avançados & Simulação",
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais para testar lotação e fila de suplentes[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time (permitindo capitães dos reservas) e sorteia automaticamente[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, aloca capitão e puxa reservas para as vagas do quadro[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -482,7 +478,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (com persistência JSON e reabertura)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (com preenchimento automático de vagas)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -655,6 +651,7 @@ async def addtime(ctx, numero_time: int):
     time_idx = numero_time - 1
     capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
 
+    # Sorteia capitão dos reservas se houver
     candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
     
     if candidatos_cap:
@@ -669,6 +666,19 @@ async def addtime(ctx, numero_time: int):
         capitaes_dict[time_idx] = "*Nenhum (Sem jogadores disponíveis)*"
 
     dados["capitaes"] = capitaes_dict
+
+    # --- LÓGICA INTELIGENTE: AO ABRIR O TIME, PUXA RESERVAS PARA AS NOVAS VAGAS DO QUADRO ---
+    esquema = dados["esquema"]
+    config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
+    
+    # Calcula quantas vagas titulares existem agora com o novo time
+    vagas_totais_titulares = sum(config_formacao.values()) * dados["qtd_times_ativos"]
+    
+    # Se ainda houver vagas sobrando no quadro e reservas na fila, puxa para titulares
+    while len(dados["titulares"]) < vagas_totais_titulares and dados["reservas"]:
+        puxado = dados["reservas"].pop(0)
+        dados["titulares"].append(puxado)
+
     salvar_listas()
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
@@ -682,7 +692,7 @@ async def addtime(ctx, numero_time: int):
         dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
     )
     await msg.edit(embed=novo_embed, view=nova_view)
-    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO COM SUCESSO!** Capitão sorteado automaticamente.", delete_after=12)
+    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Vagas preenchidas automaticamente com os reservas da fila.", delete_after=12)
 
 @bot.command(name="remover")
 async def remover(ctx, member: discord.Member = None):
@@ -756,16 +766,15 @@ async def fechar_lista(ctx):
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     qtd_times = dados["qtd_times_ativos"]
 
-    # --- CORREÇÃO DE DISTRIBUIÇÃO E EQUILÍBRIO POR TIME ---
+    # --- SORTEIO FINAL EQUILIBRADO DOS TIMES AO FECHAR A LISTA ---
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
     capitaes_atribuidos = {int(k): v for k, v in dados["capitaes"].items()}
 
-    todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
-
-    # Unifica todos para fazer a distribuição perfeita por posições exatas por time
+    # Junta todo mundo (titulares do quadro + reservas restantes) para o sorteio final justo
     todos_candidatos = list(dados["titulares"]) + list(dados["reservas"])
-    
-    # Primeiro, aloca os capitães se definidos
+    todos_participantes = [item['user'] for item in todos_candidatos]
+
+    # Aloca primeiro os capitães nos respetivos times
     for i in range(qtd_times):
         cap_str = capitaes_atribuidos.get(i)
         if cap_str:
@@ -781,21 +790,17 @@ async def fechar_lista(ctx):
                 if len(times_montados[i][pos]) < config_formacao[pos]:
                     times_montados[i][pos].append(encontrado['user'])
                 else:
-                    # Encontra outra vaga no mesmo time
-                    alocado = False
                     for p in config_formacao.keys():
                         if len(times_montados[i][p]) < config_formacao[p]:
                             times_montados[i][p].append(encontrado['user'])
-                            alocado = True
                             break
 
-    # Distribui o restante respeitando estritamente a formação por time
-    novos_reservas = []
+    # Distribui o restante de forma 100% equilibrada por posição e tamanho de elenco
     random.shuffle(todos_candidatos)
+    novos_reservas = []
 
     for item in todos_candidatos:
         pos = item['pos']
-        # Procura time com vaga exata na posição
         times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
         
         if times_com_vaga_pos:
@@ -803,7 +808,6 @@ async def fechar_lista(ctx):
             t_escolhido = times_com_vaga_pos[0]
             times_montados[t_escolhido][pos].append(item['user'])
         else:
-            # Procura qualquer vaga livre em qualquer posição no time com menos jogadores
             vagas_livres = []
             for i in range(qtd_times):
                 for p in config_formacao.keys():
@@ -834,7 +838,7 @@ async def fechar_lista(ctx):
         msg = await channel.fetch_message(msg_id)
         await msg.edit(view=None)
 
-        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - EQUILIBRADOS E SORTEADOS)!**\n\n"
+        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - SORTEADOS E EQUILIBRADOS)!**\n\n"
 
         for idx in range(qtd_times):
             nome_time = NOMES_TIMES[idx]
