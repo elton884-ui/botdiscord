@@ -31,8 +31,7 @@ listas_ativas = {}
 # Canal do Discord atualizado onde o bot vai enviar os avisos
 CANAL_AVISO_ID = 1570420721312866436
 
-# Versão atual do bot (Altere para v1.3, v1.4... quando fizer novas atualizações de código)
-VERSAO_ATUAL = "v1.2"
+VERSAO_ATUAL = "v1.3"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -43,7 +42,6 @@ async def on_ready():
         channel = bot.get_channel(CANAL_AVISO_ID)
         if channel:
             try:
-                # Verifica se houve alteração de versão para enviar o changelog ou apenas o aviso de reinício
                 ultima_versao = ""
                 if os.path.exists(ARQUIVO_VERSAO):
                     with open(ARQUIVO_VERSAO, "r") as f:
@@ -53,17 +51,17 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
+                        "• **Comando `!comandos`:** Painel único unificado com todos os comandos do bot.\n"
                         "• **Comando `!simular [qtd]`:** Cria jogadores virtuais para testar lotação e fila de reservas[cite: 1].\n"
-                        "• **Times Progressivos (`!addtime 3` / `!addtime 4`):** Começa com 2 times e sorteia novos capitães direto dos reservas ao abrir novos times[cite: 1].\n"
-                        "• **Layout Vertical:** Listas de escalação final otimizadas para leitura limpa no chat[cite: 1].\n"
-                        "• **Equilíbrio Automático:** Distribuição justa de jogadores entre os times ativos[cite: 1]."
+                        "• **Times Progressivos (`!addtime 3` / `!addtime 4`):** Começa com 2 times e sorteia novos capitães direto dos reservas[cite: 1].\n"
+                        "• **Layout Vertical:** Listas de escalação final otimizadas para leitura limpa no chat[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
                     with open(ARQUIVO_VERSAO, "w") as f:
                         f.write(VERSAO_ATUAL)
                 else:
-                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando normalmente no novo canal! ⚽🔥")
+                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando normalmente! ⚽🔥")
                     
             except Exception as e:
                 print(f"Erro ao enviar mensagem de aviso no canal: {e}")
@@ -265,6 +263,48 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
+# --- NOVO COMANDO: !comandos (Painel Único de Ajuda) ---
+@bot.command(name="comandos")
+async def comandos(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    embed = discord.Embed(
+        title="⚽ PAINEL DE COMANDOS — ROIPIAU FC",
+        description="Lista completa de comandos e funcionalidades oficiais para gerenciar os treinos e campeonatos:\n\u200b",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="📋 Gestão de Listas",
+        value=(
+            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
+            "`!fecharlista`\n> Encerra as inscrições, equilibra e sorteia os times na vertical."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚙️ Comandos Avançados & Simulação",
+        value=(
+            "`!simular <quantidade>`\n> Cria jogadores virtuais para testar a lotação e fila de suplentes[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e sorteia automaticamente um novo capitão direto dos reservas[cite: 1].\n"
+            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🛠️ Sistema & Diagnóstico",
+        value="`!teste`\n> Verifica a latência (ping) e o status operacional do bot.",
+        inline=False
+    )
+
+    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
+    await ctx.send(embed=embed)
+
 @bot.command(name="teste")
 async def teste(ctx):
     try:
@@ -279,7 +319,7 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas na Memória:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!criarlista`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!criarlista`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
