@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v2.0"
+VERSAO_ATUAL = "v2.2"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Limpeza Automática (24h):** As mensagens de escalação e relatórios enviados nos canais agora são apagados automaticamente 24 horas após o fechamento da lista[cite: 1]."
+                        "• **Comando `!reabrir` (Restaurar):** Permite restaurar e reabrir rapidamente a última lista fechada no canal, trazendo os botões de volta[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -328,6 +328,8 @@ async def comandos(ctx):
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
+            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista fechada no canal com os botões ativos[cite: 1].\n"
+            "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord[cite: 1].\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
             "`!fecharlista`\n> Encerra as inscrições, aloca capitães, sorteia os times e programa limpeza de 24h[cite: 1]."
         ),
@@ -395,6 +397,82 @@ async def listas_ativas_cmd(ctx):
     else:
         await ctx.send(embed=embed)
 
+@bot.command(name="reabrir", aliases=["restaurar"])
+async def reabrir_lista(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    # Encontra a última lista fechada neste canal
+    msg_id_alvo = None
+    for mid, dados in reversed(list(listas_ativas.items())):
+        if dados["channel_id"] == ctx.channel.id and dados["fechada"]:
+            msg_id_alvo = mid
+            break
+
+    if not msg_id_alvo or msg_id_alvo not in listas_ativas:
+        await ctx.send("⚠️ Nenhuma lista fechada encontrada neste canal para restaurar!", delete_after=10)
+        return
+
+    dados = listas_ativas[msg_id_alvo]
+    dados["fechada"] = False
+    
+    # Recria a view com os botões interativos
+    nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
+    dados["view"] = nova_view
+    salvar_listas()
+
+    channel = bot.get_channel(dados["channel_id"])
+    try:
+        msg = await channel.fetch_message(msg_id_alvo)
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=nova_view)
+        await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!** Os botões estão ativos novamente.", delete_after=12)
+    except Exception as e:
+        await ctx.send(f"⚠️ Erro ao tentar restaurar a mensagem da lista: {e}", delete_after=10)
+
+@bot.command(name="limparmortas")
+async def limpar_mortas(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    removidas = 0
+    ids_para_remover = []
+
+    for mid, dados in list(listas_ativas.items()):
+        canal_id = dados.get("channel_id")
+        canal = bot.get_channel(canal_id)
+        
+        if not canal:
+            ids_para_remover.append(mid)
+            removidas += 1
+            continue
+            
+        try:
+            await canal.fetch_message(mid)
+        except discord.NotFound:
+            ids_para_remover.append(mid)
+            removidas += 1
+        except discord.Forbidden:
+            pass
+        except Exception:
+            pass
+
+    for mid in ids_para_remover:
+        del listas_ativas[mid]
+
+    if removidas > 0:
+        salvar_listas()
+        await ctx.send(f"🧹 **Limpeza concluída!** `{removidas}` listas órfãs/apagadas foram removidas do sistema.", delete_after=12)
+    else:
+        await ctx.send("✨ **Tudo limpo!** Nenhuma lista órfã encontrada no sistema.", delete_after=10)
+
 @bot.command(name="teste")
 async def teste(ctx):
     try:
@@ -406,10 +484,10 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (com persistência JSON e limpeza de 24h)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (com persistência JSON e reabertura)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
@@ -812,36 +890,4 @@ async def fechar_lista(ctx):
         relatorio_msg_enviada = None
         canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
         if canal_escalacao:
-            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
-            relatorio_msg = (
-                f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
-                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
-                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
-                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
-            )
-            relatorio_msg_enviada = await canal_escalacao.send(relatorio_msg)
-
-        # --- TAREFA EM SEGUNDO PLANO: APAGAR MENSAGENS APÓS 24 HORAS ---
-        async def apagar_depois_de_24h(msg_esc, msg_rel):
-            await asyncio.sleep(86400) # 24 horas em segundos
-            try:
-                if msg_esc:
-                    await msg_esc.delete()
-            except Exception as e:
-                print(f"Erro ao apagar mensagem de escalação automática: {e}")
-            try:
-                if msg_rel:
-                    await msg_rel.delete()
-            except Exception as e:
-                print(f"Erro ao apagar relatório automático: {e}")
-
-        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada!")
-else:
-    bot.run(TOKEN)
+            participantes_str = ", ".join(todos_participantes
