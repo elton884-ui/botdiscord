@@ -55,7 +55,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v3.2"
+VERSAO_ATUAL = "v3.3"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Recuperação de Mensagem Apagada:** Se a lista for apagada por engano, o comando `!reabrir` agora recria a mensagem automaticamente sem perder nenhum inscrito[cite: 1]."
+                        "• **Correção na Simulação para 4 Times:** Ajuste na distribuição de jogadores virtuais para suportar até 44 cadastros simultâneos[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -339,7 +339,7 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando os limites máximos por posição[cite: 1].\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais distribuindo dinamicamente pelo teto de 4 times[cite: 1].\n"
             "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e preenche vagas com reservas sem definir capitães[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
@@ -404,7 +404,6 @@ async def reabrir_lista(ctx):
     except Exception:
         pass
 
-    # Procura a última lista fechada ou aberta neste canal
     msg_id_alvo = None
     dados_alvo = None
     for mid, dados in reversed(list(listas_ativas.items())):
@@ -424,7 +423,6 @@ async def reabrir_lista(ctx):
     channel = bot.get_channel(dados_alvo["channel_id"])
     
     try:
-        # Tenta encontrar a mensagem original para editá-la
         msg = await channel.fetch_message(msg_id_alvo)
         novo_embed = gerar_embed_dinamico(
             dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
@@ -433,14 +431,12 @@ async def reabrir_lista(ctx):
         await msg.edit(embed=novo_embed, view=nova_view)
         await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!**", delete_after=12)
     except (discord.NotFound, discord.HTTPException):
-        # Se a mensagem foi apagada, cria uma nova mensagem no chat mantendo todos os inscritos!
         novo_embed = gerar_embed_dinamico(
             dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
             dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
         )
         nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
         
-        # Atualiza o ID na base de dados com o ID da nova mensagem criada
         del listas_ativas[msg_id_alvo]
         listas_ativas[nova_msg.id] = dados_alvo
         salvar_listas()
@@ -498,7 +494,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Recuperação automática de mensagens ativada)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Simulação dinâmica de 4 times corrigida)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -605,11 +601,13 @@ async def simular(ctx, quantidade: int):
     dados = listas_ativas[msg_id]
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
-    qtd_times = dados["qtd_times_ativos"]
+    
+    # Preenche o quadro considerando o limite máximo de 4 times ativos na simulação (44 jogadores titulares)
+    vagas_maximas_titulares = sum(config_formacao.values()) * 4
     
     posicoes_disponiveis = []
     for pos, qtd in config_formacao.items():
-        for _ in range(qtd * qtd_times):
+        for _ in range(qtd * 4):
             posicoes_disponiveis.append(pos)
 
     titulares = []
@@ -640,7 +638,7 @@ async def simular(ctx, quantidade: int):
     except Exception:
         pass
 
-    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{quantidade}` jogadores virtuais.", delete_after=10)
+    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{quantidade}` jogadores virtuais distribuídos pelo teto de 4 times.", delete_after=10)
 
 @bot.command(name="addtime")
 async def addtime(ctx, numero_time: int):
@@ -700,7 +698,6 @@ async def addtime(ctx, numero_time: int):
         )
         await msg.edit(embed=novo_embed, view=nova_view)
     except Exception:
-        # Se a mensagem foi apagada, cria uma nova ao adicionar o time
         novo_embed = gerar_embed_dinamico(
             dados["titulo"], dados["esquema"], dados["categoria"], 
             dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
