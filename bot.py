@@ -29,10 +29,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.8.1"
+VERSAO_ATUAL = "v1.8.2"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,8 +52,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção de Capitães:** O bot agora localiza o capitão corretamente (seja nos titulares ou reservas) e garante a escalação dele no time[cite: 1].\n"
-                        "• **Fechamento Real:** Organiza os jogadores reais inscritos e envia o resumo no canal de escalações[cite: 1]."
+                        "• **Regra de Capitães por Times:** Com 2 times ativos, capitães são estritamente titulares. Apenas no 3º/4º time os reservas podem ser capitães[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -107,6 +106,15 @@ def extrair_id(texto):
     match = re.search(r'\d+', str(texto))
     return int(match.group()) if match else None
 
+def jogador_esta_nos_titulares(titulares, target_id):
+    for item in titulares:
+        if extrair_id(item['user']) == target_id:
+            return True
+    return False
+
+def jogador_ja_esta_na_lista(titulares, reservas, target_id):
+    return jogador_esta_nos_titulares(titulares, target_id) or any(extrair_id(item['user']) == target_id for item in reservas)
+
 def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos=2):
     embed = discord.Embed(
         title=f"📋 {titulo.upper()}",
@@ -153,15 +161,6 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
     embed.add_field(name="⏳ LISTA DE SUPLENTES / RESERVAS", value=val_reservas, inline=False)
     embed.set_footer(text="Clique nos botões abaixo para preencher a vaga ou use os comandos progressivos!")
     return embed
-
-def jogador_ja_esta_na_lista(titulares, reservas, target_id):
-    for item in titulares:
-        if extrair_id(item['user']) == target_id:
-            return True
-    for item in reservas:
-        if extrair_id(item['user']) == target_id:
-            return True
-    return False
 
 class ListaButtonsDinamica(discord.ui.View):
     def __init__(self, esquema, qtd_times=2):
@@ -227,6 +226,11 @@ class ListaButtonsDinamica(discord.ui.View):
 
             if not jogador_ja_esta_na_lista(dados["titulares"], dados["reservas"], user_id):
                 await interaction.response.send_message(f"⚠️ Você precisa estar na lista para ser capitão do **{nome_t}**!", ephemeral=True)
+                return False
+
+            # REGRA: Se houver apenas 2 times ativos, capitão tem de ser obrigatoriamente titular
+            if qtd_times_ativos <= 2 and not jogador_esta_nos_titulares(dados["titulares"], user_id):
+                await interaction.response.send_message(f"⚠️ Com apenas 2 times ativos, apenas jogadores **titulares** podem ser capitães!", ephemeral=True)
                 return False
 
             cap_atual_id = extrair_id(dados["capitaes"].get(time_idx))
@@ -295,7 +299,7 @@ async def comandos(ctx):
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, aloca capitães (reais/reservas) com segurança e sorteia os times[cite: 1]."
+            "`!fecharlista`\n> Encerra as inscrições, aloca capitães respeitando a regra de titulares e sorteia os times[cite: 1]."
         ),
         inline=False
     )
@@ -304,7 +308,7 @@ async def comandos(ctx):
         name="⚙️ Comandos Avançados & Simulação",
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais para testar lotação e fila de suplentes[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e sorteia automaticamente um novo capitão[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time (permitindo capitães dos reservas) e sorteia automaticamente[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -502,6 +506,7 @@ async def addtime(ctx, numero_time: int):
     dados["qtd_times_ativos"] = numero_time
     time_idx = numero_time - 1
 
+    # Regra: Para o 3º e 4º time, prioriza reservas se houver, senão titulares
     candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
     
     if candidatos_cap:
@@ -601,7 +606,7 @@ async def fechar_lista(ctx):
 
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
-    # --- CORREÇÃO ROBUSTA DE CAPITÃES (Titulares + Reservas) ---
+    # --- ALOCAÇÃO DE CAPITÃES (Titulares e Reservas validados) ---
     restantes = list(dados["titulares"])
     reservas_disponiveis = list(dados["reservas"])
 
@@ -610,16 +615,16 @@ async def fechar_lista(ctx):
         if cap_str:
             cap_id = extrair_id(cap_str)
             encontrado = None
-            origem = None  # "titular" ou "reserva"
+            origem = None
 
-            # Procura primeiro nos titulares
+            # Procura nos titulares
             for item in restantes:
                 if extrair_id(item['user']) == cap_id:
                     encontrado = item
                     origem = "titular"
                     break
             
-            # Se não estiver nos titulares, procura nos reservas
+            # Se não estiver nos titulares, procura nos reservas (válido para time 3 ou 4)
             if not encontrado:
                 for item in reservas_disponiveis:
                     if extrair_id(item['user']) == cap_id:
@@ -646,7 +651,6 @@ async def fechar_lista(ctx):
                     if not alocado:
                         reservas_disponiveis.append(encontrado)
 
-    # Atualiza a lista de reservas com os que sobraram após puxar os capitães dos reservas
     dados["reservas"] = reservas_disponiveis
 
     # 2. Embaralha restantes
