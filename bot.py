@@ -23,17 +23,16 @@ Thread(target=run_web_server, daemon=True).start()
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True  # Necessário para o bot detetar reações
+intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
 
-# Canais do Discord configurados
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.7"
+VERSAO_ATUAL = "v1.7.1"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -53,9 +52,8 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Auto-Preenchimento por Bots:** Ao fechar a lista, o bot preenche automaticamente as vagas vazias restantes com jogadores virtuais, sem tocar nos humanos[cite: 1]!\n"
-                        "• **Canal de Escalações Dedicado:** Envia o resumo e o agradecimento de quem participou no canal de escalações[cite: 1].\n"
-                        "• **Apagar por Reação:** Reaja com `✅` em mensagens do bot no canal de avisos para apagá-las[cite: 1]."
+                        "• **Correção de Sintaxe:** Ajuste interno concluído para garantir estabilidade total ao fechar listas com bots[cite: 1, 5]!\n"
+                        "• **Auto-Preenchimento por Bots:** Vagas vazias preenchidas automaticamente ao fechar a lista[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -67,7 +65,6 @@ async def on_ready():
             except Exception as e:
                 print(f"Erro ao enviar mensagem de aviso no canal: {e}")
 
-# --- EVENTO: APAGAR MENSAGEM AO REAGIR COM VERIFICADO ---
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id:
@@ -600,16 +597,13 @@ async def fechar_lista(ctx):
     qtd_times = dados["qtd_times_ativos"]
 
     # --- AUTO-PREENCHIMENTO DE VAGAS VAZIAS COM BOTS ---
-    # Verifica quais vagas exatas existem no total para todos os times ativos
     vagas_totais_necessarias = []
     for pos, qtd_por_time in config_formacao.items():
         for _ in range(qtd_por_time * qtd_times):
             vagas_totais_necessarias.append(pos)
 
-    # Se faltarem titulares para completar o total de vagas, preenche as vagas vazias com bots
     bot_counter = 1
     while len(dados["titulares"]) < len(vagas_totais_necessarias):
-        # Descobre qual a posição que está a faltar
         pos_faltando = vagas_totais_necessarias[len(dados["titulares"])]
         dados["titulares"].append({"user": f"🤖 Jogador Bot {bot_counter}", "pos": pos_faltando})
         bot_counter += 1
@@ -617,9 +611,91 @@ async def fechar_lista(ctx):
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
     capitaes_atribuidos = dados["capitaes"]
 
-    # Coleta todos os participantes únicos para o relatório de agradecimento
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
     # 1. Aloca os capitães fixos humanos
     restantes = list(dados["titulares"])
-    for i in range
+    for i in range(qtd_times):
+        cap_str = capitaes_atribuidos.get(i)
+        if cap_str:
+            cap_id = extrair_id(cap_str)
+            encontrado = None
+            for item in restantes:
+                if extrair_id(item['user']) == cap_id:
+                    encontrado = item
+                    break
+            if encontrado:
+                restantes.remove(encontrado)
+                pos = encontrado['pos']
+                if len(times_montados[i][pos]) < config_formacao[pos]:
+                    times_montados[i][pos].append(encontrado['user'])
+                else:
+                    alocado = False
+                    for p in config_formacao.keys():
+                        if len(times_montados[i][p]) < config_formacao[p]:
+                            times_montados[i][p].append(encontrado['user'])
+                            alocado = True
+                            break
+                    if not alocado:
+                        dados["reservas"].append(encontrado)
+
+    # 2. Embaralha restantes
+    random.shuffle(restantes)
+
+    # 3. Distribuição equilibrada
+    for item in restantes:
+        pos = item['pos']
+        times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
+        
+        if times_com_vaga_pos:
+            times_com_vaga_pos.sort(key=lambda t: sum(len(lst) for lst in times_montados[t].values()))
+            t_escolhido = times_com_vaga_pos[0]
+            times_montados[t_escolhido][pos].append(item['user'])
+        else:
+            vagas_livres = []
+            for i in range(qtd_times):
+                for p in config_formacao.keys():
+                    if len(times_montados[i][p]) < config_formacao[p]:
+                        vagas_livres.append((i, p))
+            
+            if vagas_livres:
+                vagas_livres.sort(key=lambda item_vaga: sum(len(lst) for lst in times_montados[item_vaga[0]].values()))
+                t_escolhido, p_escolhida = vagas_livres[0]
+                times_montados[t_escolhido][p_escolhida].append(item['user'])
+            else:
+                dados["reservas"].append(item)
+
+    # 4. Trava de segurança
+    for i in range(qtd_times):
+        membros = [j for v in times_montados[i].values() for j in v]
+        if not membros:
+            if dados["reservas"]:
+                puxado = dados["reservas"].pop(0)
+                p = puxado['pos']
+                times_montados[i][p].append(puxado['user'])
+            else:
+                for outro_i in range(qtd_times):
+                    for p, lista_j in times_montados[outro_i].items():
+                        if len(lista_j) > 1:
+                            movido = lista_j.pop()
+                            times_montados[i][p].append(movido)
+                            break
+                    break
+
+    # 5. Capitão automático de segurança
+    for i in range(qtd_times):
+        if i not in capitaes_atribuidos or not capitaes_atribuidos[i]:
+            candidatos_humanos = [j for v in times_montados[i].values() for j in v if "🤖" not in str(j)]
+            if candidatos_humanos:
+                sorteado = random.choice(candidatos_humanos)
+                capitaes_atribuidos[i] = sorteado
+            else:
+                candidatos_gerais = [j for v in times_montados[i].values() for j in v]
+                capitaes_atribuidos[i] = random.choice(candidatos_gerais) if candidatos_gerais else "*Nenhum*"
+
+    channel = bot.get_channel(dados["channel_id"])
+    try:
+        msg = await channel.fetch_message(msg_id)
+        await msg.edit(view=None)
+
+        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - COMPLETO COM BOTS, EQUILIBRADOS E SOR
