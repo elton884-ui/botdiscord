@@ -1,6 +1,8 @@
 import os
 import re
 import random
+import json
+import asyncio
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
@@ -27,12 +29,33 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-listas_ativas = {}
+# --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON ---
+ARQUIVO_DADOS = "listas_ativas.json"
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
+def carregar_listas():
+    if os.path.exists(ARQUIVO_DADOS):
+        try:
+            with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+                dados_brutos = json.load(f)
+                return {int(k): v for k, v in dados_brutos.items()}
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar listas salvas: {e}")
+    return {}
+
+def salvar_listas():
+    try:
+        with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
+            dados_str_keys = {str(k): v for k, v in listas_ativas.items()}
+            json.dump(dados_str_keys, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar listas: {e}")
+
+listas_ativas = carregar_listas()
+
+CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.8.4"
+VERSAO_ATUAL = "v2.0"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Comando `!listasativas` Direto no Canal de Avisos:** Agora o comando envia o resumo de treinos abertos diretamente no canal de avisos configurado[cite: 1]."
+                        "• **Limpeza Automática (24h):** As mensagens de escalação e relatórios enviados nos canais agora são apagados automaticamente 24 horas após o fechamento da lista[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -123,9 +146,10 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
     )
 
     val_capitaes_list = []
+    capitaes_int = {int(k): v for k, v in capitaes.items()}
     for i in range(qtd_times_ativos):
         nome_t = NOMES_TIMES[i]
-        cap = capitaes.get(i) or "*A definir (clique no botão)*"
+        cap = capitaes_int.get(i) or "*A definir (clique no botão)*"
         emoji_cap = EMOJIS_CAP[i]
         val_capitaes_list.append(f"{emoji_cap} **{nome_t}:** {cap}")
 
@@ -215,6 +239,7 @@ class ListaButtonsDinamica(discord.ui.View):
 
         config_formacao = FORMAGOES.get(dados["esquema"], FORMAGOES["352"])
         qtd_times_ativos = dados["qtd_times_ativos"]
+        capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
 
         if custom_id.startswith("btn_cap_time"):
             time_idx = int(custom_id.replace("btn_cap_time", "")) - 1
@@ -232,25 +257,28 @@ class ListaButtonsDinamica(discord.ui.View):
                 await interaction.response.send_message(f"⚠️ Com apenas 2 times ativos, apenas jogadores **titulares** podem ser capitães!", ephemeral=True)
                 return False
 
-            cap_atual_id = extrair_id(dados["capitaes"].get(time_idx))
+            cap_atual_id = extrair_id(capitaes_dict.get(time_idx))
 
             if cap_atual_id == user_id:
-                dados["capitaes"][time_idx] = None
+                capitaes_dict[time_idx] = None
             elif cap_atual_id is not None:
                 await interaction.response.send_message(f"⚠️ O **{nome_t}** já tem um capitão definido!", ephemeral=True)
                 return False
             else:
-                for k in list(dados["capitaes"].keys()):
-                    if extrair_id(dados["capitaes"].get(k)) == user_id:
-                        dados["capitaes"][k] = None
-                dados["capitaes"][time_idx] = user_mention
+                for k in list(capitaes_dict.keys()):
+                    if extrair_id(capitaes_dict.get(k)) == user_id:
+                        capitaes_dict[k] = None
+                capitaes_dict[time_idx] = user_mention
+
+            dados["capitaes"] = capitaes_dict
 
         elif custom_id == "btn_sair":
             dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) != user_id]
             dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) != user_id]
-            for k, v in list(dados["capitaes"].items()):
+            for k, v in list(capitaes_dict.items()):
                 if extrair_id(v) == user_id:
-                    dados["capitaes"][k] = None
+                    capitaes_dict[k] = None
+            dados["capitaes"] = capitaes_dict
 
         elif custom_id.startswith("btn_pos_"):
             pos_key = custom_id.replace("btn_pos_", "")
@@ -266,6 +294,8 @@ class ListaButtonsDinamica(discord.ui.View):
                 dados["titulares"].append({"user": user_mention, "pos": pos_key})
             else:
                 dados["reservas"].append({"user": user_mention, "pos": pos_key})
+
+        salvar_listas()
 
         novo_embed = gerar_embed_dinamico(
             dados["titulo"], 
@@ -299,7 +329,7 @@ async def comandos(ctx):
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
             "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, aloca capitães e sorteia os times[cite: 1]."
+            "`!fecharlista`\n> Encerra as inscrições, aloca capitães, sorteia os times e programa limpeza de 24h[cite: 1]."
         ),
         inline=False
     )
@@ -341,7 +371,7 @@ async def listas_ativas_cmd(ctx):
 
     embed = discord.Embed(
         title="📋 CONVOCAÇÕES ABERTAS — ROIPIAU FC",
-        description=f"Total de listas ativas na memória: `{len(abertas)}`\n\u200b",
+        description=f"Total de listas ativas salvas: `{len(abertas)}`\n\u200b",
         color=discord.Color.gold()
     )
 
@@ -359,7 +389,6 @@ async def listas_ativas_cmd(ctx):
 
     embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
 
-    # Envia o resultado direto no canal de avisos configurado
     canal_aviso = bot.get_channel(CANAL_AVISO_ID)
     if canal_aviso:
         await canal_aviso.send(embed=embed)
@@ -377,9 +406,9 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (com persistência JSON e limpeza de 24h)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
-        f"📋 **Listas Ativas na Memória:** `{len(listas_ativas)}`\n"
+        f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
@@ -418,6 +447,7 @@ async def criar_lista(ctx, *, args):
             "view": view,
             "qtd_times_ativos": qtd_times_ativos
         }
+        salvar_listas()
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
 
@@ -445,6 +475,7 @@ async def limpar(ctx):
     dados["titulares"] = []
     dados["reservas"] = []
     dados["capitaes"] = {i: None for i in range(dados["qtd_times_ativos"])}
+    salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
     msg = await channel.fetch_message(msg_id)
@@ -499,6 +530,7 @@ async def simular(ctx, quantidade: int):
 
     dados["titulares"] = titulares
     dados["reservas"] = reservas
+    salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
     msg = await channel.fetch_message(msg_id)
@@ -545,19 +577,23 @@ async def addtime(ctx, numero_time: int):
 
     dados["qtd_times_ativos"] = numero_time
     time_idx = numero_time - 1
+    capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
 
     candidatos_cap = dados["reservas"] if dados["reservas"] else dados["titulares"]
     
     if candidatos_cap:
         sorteado = random.choice(candidatos_cap)
-        dados["capitaes"][time_idx] = sorteado['user']
+        capitaes_dict[time_idx] = sorteado['user']
         
         if sorteado in dados["reservas"]:
             dados["reservas"].remove(sorteado)
         elif sorteado in dados["titulares"]:
             dados["titulares"].remove(sorteado)
     else:
-        dados["capitaes"][time_idx] = "*Nenhum (Sem jogadores disponíveis)*"
+        capitaes_dict[time_idx] = "*Nenhum (Sem jogadores disponíveis)*"
+
+    dados["capitaes"] = capitaes_dict
+    salvar_listas()
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
     dados["view"] = nova_view
@@ -596,12 +632,15 @@ async def remover(ctx, member: discord.Member = None):
 
     dados = listas_ativas[msg_id]
     user_id = member.id
+    capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
 
     dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) != user_id]
     dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) != user_id]
-    for k, v in list(dados["capitaes"].items()):
+    for k, v in list(capitaes_dict.items()):
         if extrair_id(v) == user_id:
-            dados["capitaes"][k] = None
+            capitaes_dict[k] = None
+    dados["capitaes"] = capitaes_dict
+    salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
     msg = await channel.fetch_message(msg_id)
@@ -635,13 +674,14 @@ async def fechar_lista(ctx):
 
     dados = listas_ativas[msg_id]
     dados["fechada"] = True
+    salvar_listas()
 
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     qtd_times = dados["qtd_times_ativos"]
 
     times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
-    capitaes_atribuidos = dados["capitaes"]
+    capitaes_atribuidos = {int(k): v for k, v in dados["capitaes"].items()}
 
     todos_participantes = [item['user'] for item in dados["titulares"]] + [item['user'] for item in dados["reservas"]]
 
@@ -688,6 +728,7 @@ async def fechar_lista(ctx):
                         reservas_disponiveis.append(encontrado)
 
     dados["reservas"] = reservas_disponiveis
+    salvar_listas()
 
     random.shuffle(restantes)
 
@@ -766,8 +807,9 @@ async def fechar_lista(ctx):
             res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
             mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
 
-        await ctx.send(mensagem_escalacao)
+        msg_escalacao_enviada = await ctx.send(mensagem_escalacao)
 
+        relatorio_msg_enviada = None
         canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
         if canal_escalacao:
             participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
@@ -777,7 +819,23 @@ async def fechar_lista(ctx):
                 f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
                 f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
             )
-            await canal_escalacao.send(relatorio_msg)
+            relatorio_msg_enviada = await canal_escalacao.send(relatorio_msg)
+
+        # --- TAREFA EM SEGUNDO PLANO: APAGAR MENSAGENS APÓS 24 HORAS ---
+        async def apagar_depois_de_24h(msg_esc, msg_rel):
+            await asyncio.sleep(86400) # 24 horas em segundos
+            try:
+                if msg_esc:
+                    await msg_esc.delete()
+            except Exception as e:
+                print(f"Erro ao apagar mensagem de escalação automática: {e}")
+            try:
+                if msg_rel:
+                    await msg_rel.delete()
+            except Exception as e:
+                print(f"Erro ao apagar relatório automático: {e}")
+
+        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
 
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
