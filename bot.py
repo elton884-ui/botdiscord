@@ -23,15 +23,16 @@ Thread(target=run_web_server, daemon=True).start()
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
+intents.reactions = True  # Necessário para o bot detetar reações
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 listas_ativas = {}
 
-# Canal do Discord atualizado onde o bot vai enviar os avisos
+# Canal do Discord onde o bot envia os avisos e relatórios
 CANAL_AVISO_ID = 1570420721312866436
 
-VERSAO_ATUAL = "v1.3"
+VERSAO_ATUAL = "v1.5"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -51,10 +52,10 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Comando `!comandos`:** Painel único unificado com todos os comandos do bot.\n"
-                        "• **Comando `!simular [qtd]`:** Cria jogadores virtuais para testar lotação e fila de reservas[cite: 1].\n"
-                        "• **Times Progressivos (`!addtime 3` / `!addtime 4`):** Começa com 2 times e sorteia novos capitães direto dos reservas[cite: 1].\n"
-                        "• **Layout Vertical:** Listas de escalação final otimizadas para leitura limpa no chat[cite: 1]."
+                        "• **Apagar por Reação:** Reaja com `✅` em qualquer mensagem do bot no canal de relatórios para apagá-la automaticamente.\n"
+                        "• **Comando `!limpar`:** Limpa e reseta todos os inscritos da lista ativa.\n"
+                        "• **Comando `!comandos`:** Painel unificado com todos os comandos do bot.\n"
+                        "• **Comando `!simular [qtd]`:** Cria jogadores virtuais para testar lotação[cite: 1]."
                     )
                     await channel.send(changelog_msg)
                     
@@ -65,6 +66,27 @@ async def on_ready():
                     
             except Exception as e:
                 print(f"Erro ao enviar mensagem de aviso no canal: {e}")
+
+# --- NOVO EVENTO: APAGAR MENSAGEM AO REAGIR COM VERIFICADO ---
+@bot.event
+async def on_raw_reaction_add(payload):
+    # Ignora reações dadas por bots (incluindo o próprio bot)
+    if payload.user_id == bot.user.id:
+        return
+
+    # Verifica se a reação foi no canal de relatórios/avisos configurado
+    if payload.channel_id == CANAL_AVISO_ID:
+        # Verifica se o emoji usado foi o de verificado (✅)
+        if str(payload.emoji) == "✅":
+            try:
+                channel = bot.get_channel(payload.channel_id)
+                message = await channel.fetch_message(payload.message_id)
+                
+                # Apaga a mensagem se ela pertencer ao bot
+                if message.author.id == bot.user.id:
+                    await message.delete()
+            except Exception as e:
+                print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
 FORMAGOES = {
     "352":  {"GOL": 1, "ZAG": 3, "VOL": 2, "ALA": 2, "MEI": 1, "ATA": 2},
@@ -263,7 +285,6 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- NOVO COMANDO: !comandos (Painel Único de Ajuda) ---
 @bot.command(name="comandos")
 async def comandos(ctx):
     try:
@@ -281,6 +302,7 @@ async def comandos(ctx):
         name="📋 Gestão de Listas",
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com botões interativos.\n"
+            "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
             "`!fecharlista`\n> Encerra as inscrições, equilibra e sorteia os times na vertical."
         ),
         inline=False
@@ -289,8 +311,8 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais para testar a lotação e fila de suplentes[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e sorteia automaticamente um novo capitão direto dos reservas[cite: 1].\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais para testar lotação e fila de suplentes[cite: 1].\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time e sorteia automaticamente um novo capitão[cite: 1].\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -298,7 +320,10 @@ async def comandos(ctx):
 
     embed.add_field(
         name="🛠️ Sistema & Diagnóstico",
-        value="`!teste`\n> Verifica a latência (ping) e o status operacional do bot.",
+        value=(
+            "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
+            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de relatórios para apagá-la instantaneamente!"
+        ),
         inline=False
     )
 
@@ -319,7 +344,7 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas na Memória:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!criarlista`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
@@ -359,6 +384,40 @@ async def criar_lista(ctx, *, args):
         }
     except Exception:
         await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
+
+@bot.command(name="limpar")
+async def limpar(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg_id = None
+    if ctx.message.reference:
+        msg_id = ctx.message.reference.message_id
+    else:
+        for mid, dados in reversed(list(listas_ativas.items())):
+            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
+                msg_id = mid
+                break
+
+    if not msg_id or msg_id not in listas_ativas:
+        await ctx.send("⚠️ Nenhuma lista ativa encontrada para limpar!", delete_after=10)
+        return
+
+    dados = listas_ativas[msg_id]
+    dados["titulares"] = []
+    dados["reservas"] = []
+    dados["capitaes"] = {i: None for i in range(dados["qtd_times_ativos"])}
+
+    channel = bot.get_channel(dados["channel_id"])
+    msg = await channel.fetch_message(msg_id)
+    novo_embed = gerar_embed_dinamico(
+        dados["titulo"], dados["esquema"], dados["categoria"], 
+        dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+    )
+    await msg.edit(embed=novo_embed, view=dados.get("view"))
+    await ctx.send("🧹 **Lista limpa com sucesso!** Todos os inscritos e capitães foram resetados.", delete_after=10)
 
 @bot.command(name="simular")
 async def simular(ctx, quantidade: int):
@@ -605,9 +664,9 @@ async def fechar_lista(ctx):
         membros = [j for v in times_montados[i].values() for j in v]
         if not membros:
             if dados["reservas"]:
-                puxado = dados["reservas"].pop(0)
-                p = puxado['pos']
-                times_montados[i][p].append(puxado['user'])
+               puxado = dados["reservas"].pop(0)
+               p = puxado['pos']
+               times_montados[i][p].append(puxado['user'])
             else:
                 for outro_i in range(qtd_times):
                     for p, lista_j in times_montados[outro_i].items():
