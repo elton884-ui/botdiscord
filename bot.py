@@ -32,7 +32,7 @@ listas_ativas = {}
 CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
 CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
 
-VERSAO_ATUAL = "v1.7.2"
+VERSAO_ATUAL = "v1.7.3"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -52,7 +52,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção de Linha Longa:** Ajuste no fechamento de strings para estabilidade total[cite: 1, 6].\n"
+                        "• **Estabilidade Completa:** Ajuste final de quebra de linhas concluído[cite: 1, 7].\n"
                         "• **Auto-Preenchimento por Bots:** Vagas vazias preenchidas automaticamente ao fechar a lista[cite: 1]."
                     )
                     await channel.send(changelog_msg)
@@ -691,4 +691,54 @@ async def fechar_lista(ctx):
                 capitaes_atribuidos[i] = sorteado
             else:
                 candidatos_gerais = [j for v in times_montados[i].values() for j in v]
-                capitaes_atribuidos[i] = random.choice(candidatos_gerais) if candidatos_gerais else "*N
+                capitaes_atribuidos[i] = random.choice(candidatos_gerais) if candidatos_gerais else "*Nenhum*"
+
+    channel = bot.get_channel(dados["channel_id"])
+    try:
+        msg = await channel.fetch_message(msg_id)
+        await msg.edit(view=None)
+
+        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES - COMPLETO COM BOTS, EQUILIBRADOS E SORTEADOS)!**\n\n"
+
+        for idx in range(qtd_times):
+            nome_time = NOMES_TIMES[idx]
+            capitao = capitaes_atribuidos.get(idx, "*Nenhum*")
+
+            membros_linhas = []
+            for pos, lista_jogadores in times_montados[idx].items():
+                emoji = POS_EMOJIS.get(pos, "⚽")
+                for j in lista_jogadores:
+                    membros_linhas.append(f"> {emoji} **{pos}:** {j}")
+
+            elenco_str = "\n".join(membros_linhas) if membros_linhas else "> *Nenhum jogador*"
+
+            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
+            mensagem_escalacao += f"👥 **Elenco:**\n{elenco_str}\n"
+            mensagem_escalacao += f"🔊 **Call:** Entrar na call do **{nome_time}**\n"
+            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+
+        if dados["reservas"]:
+            res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
+            mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
+
+        await ctx.send(mensagem_escalacao)
+
+        canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
+        if canal_escalacao:
+            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
+            relatorio_msg = (
+                f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
+                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
+                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
+                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
+            )
+            await canal_escalacao.send(relatorio_msg)
+
+    except Exception as e:
+        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
+
+TOKEN = os.environ.get("DISCORD_TOKEN")
+if not TOKEN:
+    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada!")
+else:
+    bot.run(TOKEN)
