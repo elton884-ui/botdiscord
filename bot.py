@@ -52,10 +52,10 @@ def salvar_listas():
 
 listas_ativas = carregar_listas()
 
-CANAL_AVISO_ID = 1570420721312866436     # Canal de avisos/relatórios do bot[cite: 1]
-CANAL_ESCALACAO_ID = 1570429628588499086 # Canal dedicado ao histórico de escalações e agradecimentos[cite: 1]
+CANAL_AVISO_ID = 1570420721312866436
+CANAL_ESCALACAO_ID = 1570429628588499086
 
-VERSAO_ATUAL = "v3.10"
+VERSAO_ATUAL = "v3.11"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -75,7 +75,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção Definitiva no Addtime 4:** O fluxo de abertura suporta agora transição direta e em cascata para 3 e 4 times, garantindo envio de mensagens e promoção correta de reservas[cite: 1]."
+                        "• **Atualização Dinâmica de Botões:** Ao usar `!addtime 3` ou `!addtime 4`, os botões dos capitães correspondentes aparecem imediatamente no painel para cliques."
                     )
                     await channel.send(changelog_msg)
                     
@@ -342,11 +342,11 @@ async def comandos(ctx):
         name="📋 Gestão de Listas",
         value=(
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com 2 times ativos e restantes na reserva.\n"
-            "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas[cite: 1].\n"
-            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal[cite: 1].\n"
-            "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord[cite: 1].\n"
+            "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas.\n"
+            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal.\n"
+            "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord.\n"
             "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
-            "`!fecharlista`\n> Encerra as inscrições, processa capitães, sorteia os times e programa limpeza de 24h[cite: 1]."
+            "`!fecharlista`\n> Encerra as inscrições, processa capitães, sorteia os times e programa limpeza de 24h."
         ),
         inline=False
     )
@@ -354,8 +354,8 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição[cite: 1].\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, puxando os reservas estritamente na ordem de chegada e mantendo a posição[cite: 1].\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e puxando os reservas estritamente na ordem e posição.\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
@@ -365,7 +365,7 @@ async def comandos(ctx):
         name="🛠️ Sistema & Diagnóstico",
         value=(
             "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
-            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente[cite: 1]!"
+            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente!"
         ),
         inline=False
     )
@@ -509,7 +509,7 @@ async def teste(ctx):
     
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional (Addtime 3 e 4 robusto ativado)\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (Atualização dinâmica de botões de capitães ativa)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
@@ -696,7 +696,6 @@ async def addtime(ctx, numero_time: int):
         await ctx.send(f"⚠️ O **Time {numero_time}** já está aberto!", delete_after=10)
         return
 
-    # Define o novo número de times ativos (se for 4 e estivesse em 2, passa por 3 e vai para 4 em cascata)
     dados["qtd_times_ativos"] = numero_time
 
     esquema = dados["esquema"]
@@ -716,10 +715,11 @@ async def addtime(ctx, numero_time: int):
             novos_reservas.append(res)
             
     dados["reservas"] = novos_reservas
-    salvar_listas()
 
+    # --- ATUALIZAÇÃO DINÂMICA DA VIEW DOS BOTÕES (INCLUINDO OS NOVOS CAPITÃES) ---
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
     dados["view"] = nova_view
+    salvar_listas()
 
     channel = bot.get_channel(dados["channel_id"])
     try:
@@ -739,7 +739,7 @@ async def addtime(ctx, numero_time: int):
         listas_ativas[nova_msg.id] = dados
         salvar_listas()
 
-    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Reservas promovidos respeitando a ordem e posição exata.", delete_after=12)
+    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Botões de capitães atualizados e reservas promovidos respeitando a ordem e posição exata.", delete_after=12)
 
 @bot.command(name="remover")
 async def remover(ctx, member: discord.Member = None):
