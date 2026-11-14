@@ -57,7 +57,11 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-VERSAO_ATUAL = "v3.16"
+# --- IDs DOS CANAIS DE PRINTS E ESTATÍSTICAS ---
+CANAL_PRINTS_ID = 1571135705026134067
+CANAL_ESTATISTICAS_ID = 1571136858669187243
+
+VERSAO_ATUAL = "v3.24"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -77,7 +81,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Estabilidade no Render:** Servidor web ajustado para manter a instância ativa sem quedas precoces."
+                        "• **Comando !print:** Módulo seguro de estatísticas integrado perfeitamente!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -358,7 +362,8 @@ async def comandos(ctx):
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
             "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
-            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
+            "`!remover @Jogador`\n> Remove um participante específico da lista ativa.\n"
+            "`!print` (com imagem ou respondendo a um print)\n> Processa e envia o relatório para o canal de estatísticas."
         ),
         inline=False
     )
@@ -514,22 +519,6 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
-    )
-    @bot.command(name="teste")
-async def teste(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    ping_ms = round(bot.latency * 1000)
-    
-    feedback_msg = (
-        "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional\n"
-        f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
-        f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!print`, `!teste` — **Tudo OK!**"
     )
     
@@ -603,14 +592,6 @@ async def cmd_print(ctx):
 
     except Exception as e:
         await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
-
-@bot.command(name="criarlista")
-async def criar_lista(ctx, *, args):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-    await ctx.send(feedback_msg, delete_after=15)
 
 @bot.command(name="criarlista")
 async def criar_lista(ctx, *, args):
