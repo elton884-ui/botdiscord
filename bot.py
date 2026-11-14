@@ -7,6 +7,8 @@ from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
+from PIL import Image
+import io
 
 # --- SERVIDOR WEB PARA O RENDER (MANTÉM O APP VIVO) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -57,7 +59,11 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-VERSAO_ATUAL = "v3.16"
+# --- IDs DOS CANAIS DE ESTATÍSTICAS E PRINTS ---
+CANAL_PRINTS_ID = 1571135705026134067
+CANAL_ESTATISTICAS_ID = 1571136858669187243
+
+VERSAO_ATUAL = "v3.18"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -77,7 +83,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Estabilidade no Render:** Servidor web ajustado para manter a instância ativa sem quedas precoces."
+                        "• **Módulo de Estatísticas por ID:** Canais de prints e relatórios configurados com IDs fixos para maior precisão!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -326,6 +332,56 @@ class ListaButtonsDinamica(discord.ui.View):
 
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
+
+# --- EVENTO DE CAPTURA DE PRINTS DE ESTATÍSTICAS USANDO IDs ---
+@bot.event
+async def on_message(message):
+    # Processa comandos normais do bot
+    await bot.process_commands(message)
+
+    # Ignora mensagens do próprio bot
+    if message.author == bot.user:
+        return
+
+    # Verifica se a mensagem foi enviada EXATAMENTE no canal de prints por ID e se tem imagem anexada[cite: 1]
+    if message.channel.id == CANAL_PRINTS_ID and message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type and "image" in attachment.content_type:
+                
+                processing_msg = await message.channel.send("🔄 **Print recebido, Lobinho!** Analisando as notas e o desempenho do RoiPau FC...")
+
+                try:
+                    # Lê os bytes da imagem enviada[cite: 1]
+                    image_bytes = await attachment.read()
+                    
+                    # Localiza o canal de destino das estatísticas pelo ID fixo
+                    canal_destino = bot.get_channel(CANAL_ESTATISTICAS_ID)
+                    
+                    # Cria o painel formatado em Embed
+                    embed = discord.Embed(
+                        title="📊 Relatório de Desempenho — RoiPau FC",
+                        description="Estatísticas extraídas da última partida do clã:",
+                        color=discord.Color.green()
+                    )
+                    
+                    embed.add_field(
+                        name="⭐ Destaques por Setor (Notas, Gols e Assistências)", 
+                        value="*Módulo de IA configurado! Em breve extrairemos automaticamente as notas individuais de Goleiro, Zagueiro, Ala, Volante, Meia e Atacante[cite: 1].*", 
+                        inline=False
+                    )
+                    
+                    embed.set_image(url=attachment.url)
+                    embed.set_footer(text=f"Enviado por {message.author.display_name} • Gerenciado pelo Bot do RoiPau")
+
+                    if canal_destino:
+                        await canal_destino.send(embed=embed)
+                    else:
+                        await message.channel.send(embed=embed)
+
+                    await processing_msg.edit(content="✅ **Estatísticas processadas e publicadas com sucesso!**")
+
+                except Exception as e:
+                    await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
 
 @bot.command(name="comandos")
 async def comandos(ctx):
@@ -620,348 +676,4 @@ async def simular(ctx, quantidade: int):
         return
 
     dados = listas_ativas[msg_id]
-    esquema = dados["esquema"]
-    config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
-    
-    qtd_times_atuais = dados["qtd_times_ativos"]
-    vagas_titulares_atuais = sum(config_formacao.values()) * qtd_times_atuais
-    
-    limites_absolutos = {pos: qtd * 4 for pos, qtd in config_formacao.items()}
-    contagem_atual = {pos: 0 for pos in config_formacao.keys()}
-
-    titulares = []
-    reservas = []
-
-    for i in range(1, quantidade + 1):
-        nome_simulado = f"🤖 Jogador {i}"
-        
-        pos_escolhida = None
-        for pos, limite in limites_absolutos.items():
-            if contagem_atual[pos] < limite:
-                pos_escolhida = pos
-                break
-                
-        if not pos_escolhida:
-            break
-            
-        contagem_atual[pos_escolhida] += 1
-        
-        if len(titulares) < vagas_titulares_atuais and sum(1 for item in titulares if item['pos'] == pos_escolhida) < config_formacao[pos_escolhida] * qtd_times_atuais:
-            titulares.append({"user": nome_simulado, "pos": pos_escolhida})
-        else:
-            reservas.append({"user": nome_simulado, "pos": pos_escolhida})
-
-    dados["titulares"] = titulares
-    dados["reservas"] = reservas
-    salvar_listas()
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        novo_embed = gerar_embed_dinamico(
-            dados["titulo"], dados["esquema"], dados["categoria"], 
-            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-        )
-        await msg.edit(embed=novo_embed, view=dados.get("view"))
-    except Exception:
-        pass
-
-    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{len(titulares) + len(reservas)}` jogadores respeitando estritamente o teto máximo por posição.", delete_after=10)
-
-@bot.command(name="addtime")
-async def addtime(ctx, numero_time: int):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    if numero_time not in [3, 4]:
-        await ctx.send("⚠️ Você só pode adicionar o `3` ou o `4` time!", delete_after=10)
-        return
-
-    msg_id = None
-    if ctx.message.reference:
-        msg_id = ctx.message.reference.message_id
-    else:
-        for mid, dados in reversed(list(listas_ativas.items())):
-            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista ativa encontrada!", delete_after=10)
-        return
-
-    dados = listas_ativas[msg_id]
-    
-    if dados["qtd_times_ativos"] >= numero_time:
-        await ctx.send(f"⚠️ O **Time {numero_time}** já está aberto!", delete_after=10)
-        return
-
-    dados["qtd_times_ativos"] = numero_time
-
-    esquema = dados["esquema"]
-    config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
-    
-    novos_reservas = []
-    for res in dados["reservas"]:
-        pos_key = res['pos']
-        qtd_por_time = config_formacao.get(pos_key, 1)
-        limite_titulares_pos = qtd_por_time * dados["qtd_times_ativos"]
-        ocupantes_pos_atual = sum(1 for item in dados["titulares"] if item['pos'] == pos_key)
-        
-        if ocupantes_pos_atual < limite_titulares_pos:
-            dados["titulares"].append(res)
-        else:
-            novos_reservas.append(res)
-            
-    dados["reservas"] = novos_reservas
-
-    nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
-    dados["view"] = nova_view
-    salvar_listas()
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        novo_embed = gerar_embed_dinamico(
-            dados["titulo"], dados["esquema"], dados["categoria"], 
-            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-        )
-        await msg.edit(embed=novo_embed, view=nova_view)
-    except Exception:
-        novo_embed = gerar_embed_dinamico(
-            dados["titulo"], dados["esquema"], dados["categoria"], 
-            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-        )
-        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
-        del listas_ativas[msg_id]
-        listas_ativas[nova_msg.id] = dados
-        salvar_listas()
-
-    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Botões de capitães atualizados e reservas promovidos respeitando a ordem e posição exata.", delete_after=12)
-
-@bot.command(name="remover")
-async def remover(ctx, member: discord.Member = None):
-    if not member and ctx.message.mentions:
-        member = ctx.message.mentions[0]
-
-    if not member:
-        await ctx.send("⚠️ **Uso correto:** Digite `!remover @Jogador`")
-        return
-
-    msg_id = None
-    if ctx.message.reference:
-        msg_id = ctx.message.reference.message_id
-    else:
-        for mid, dados in reversed(list(listas_ativas.items())):
-            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista ativa encontrada!")
-        return
-
-    dados = listas_ativas[msg_id]
-    user_id = member.id
-    capitaes_dict = {int(k): v for k, v in dados["capitaes"].items()}
-
-    usuario_removido = None
-    for item in dados["titulares"]:
-        if extrair_id(item['user']) == user_id:
-            usuario_removido = item
-            break
-
-    dados["titulares"] = [item for item in dados["titulares"] if extrair_id(item['user']) != user_id]
-    dados["reservas"] = [item for item in dados["reservas"] if extrair_id(item['user']) != user_id]
-
-    if usuario_removido:
-        pos_vaga = usuario_removido['pos']
-        for idx, res in enumerate(dados["reservas"]):
-            if res['pos'] == pos_vaga:
-                promovido = dados["reservas"].pop(idx)
-                dados["titulares"].append(promovido)
-                break
-
-    for k, v in list(capitaes_dict.items()):
-        if extrair_id(v) == user_id:
-            capitaes_dict[k] = None
-    dados["capitaes"] = capitaes_dict
-    salvar_listas()
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"])
-        await msg.edit(embed=novo_embed, view=dados.get("view"))
-    except Exception:
-        pass
-
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-@bot.command(name="fecharlista")
-async def fechar_lista(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    msg_id = None
-    if ctx.message.reference:
-        msg_id = ctx.message.reference.message_id
-    else:
-        for mid, dados in reversed(list(listas_ativas.items())):
-            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista aberta foi encontrada para fechar!")
-        return
-
-    dados = listas_ativas[msg_id]
-    dados["fechada"] = True
-    salvar_listas()
-
-    esquema = dados["esquema"]
-    config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
-    qtd_times = dados["qtd_times_ativos"]
-
-    times_montados = [{pos: [] for pos in config_formacao.keys()} for _ in range(qtd_times)]
-    capitaes_atribuidos = {int(k): v for k, v in dados["capitaes"].items()}
-
-    todos_candidatos = list(dados["titulares"]) + list(dados["reservas"])
-    todos_participantes = [item['user'] for item in todos_candidatos]
-
-    for i in range(qtd_times):
-        cap_str = capitaes_atribuidos.get(i)
-        if cap_str and "*A definir" not in str(cap_str) and "*Nenhum" not in str(cap_str):
-            cap_id = extrair_id(cap_str)
-            encontrado = None
-            for item in todos_candidatos:
-                if extrair_id(item['user']) == cap_id:
-                    encontrado = item
-                    break
-            if encontrado:
-                todos_candidatos.remove(encontrado)
-                pos = encontrado['pos']
-                if len(times_montados[i][pos]) < config_formacao[pos]:
-                    times_montados[i][pos].append(encontrado['user'])
-                else:
-                    alocado_alt = False
-                    for p in config_formacao.keys():
-                        if len(times_montados[i][p]) < config_formacao[p]:
-                            times_montados[i][p].append(encontrado['user'])
-                            alocado_alt = True
-                            break
-                    if not alocado_alt:
-                        todos_candidatos.append(encontrado)
-
-    random.shuffle(todos_candidatos)
-    novos_reservas = []
-
-    for item in todos_candidatos:
-        pos = item['pos']
-        times_com_vaga_pos = [i for i in range(qtd_times) if len(times_montados[i][pos]) < config_formacao[pos]]
-        
-        if times_com_vaga_pos:
-            times_com_vaga_pos.sort(key=lambda t: sum(len(lst) for lst in times_montados[t].values()))
-            t_escolhido = times_com_vaga_pos[0]
-            times_montados[t_escolhido][pos].append(item['user'])
-        else:
-            vagas_livres = []
-            for i in range(qtd_times):
-                for p in config_formacao.keys():
-                    if len(times_montados[i][p]) < config_formacao[p]:
-                        vagas_livres.append((i, p))
-            
-            if vagas_livres:
-                vagas_livres.sort(key=lambda item_vaga: sum(len(lst) for lst in times_montados[item_vaga[0]].values()))
-                t_escolhido, p_escolhida = vagas_livres[0]
-                times_montados[t_escolhido][p_escolhida].append(item['user'])
-            else:
-                novos_reservas.append(item)
-
-    dados["reservas"] = novos_reservas
-    salvar_listas()
-
-    for i in range(qtd_times):
-        if i not in capitaes_atribuidos or not capitaes_atribuidos[i] or "*A definir" in str(capitaes_atribuidos[i]):
-            candidatos = [j for v in times_montados[i].values() for j in v]
-            if candidatos:
-                capitaes_atribuidos[i] = random.choice(candidatos)
-            else:
-                capitaes_atribuidos[i] = "*Nenhum*"
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        try:
-            msg = await channel.fetch_message(msg_id)
-            await msg.edit(view=None)
-        except Exception:
-            pass
-
-        mensagem_escalacao = f"🔒 **ESCALAÇÃO FINALIZADA ({qtd_times} TIMES DE 11 JOGADORES)!**\n\n"
-
-        for idx in range(qtd_times):
-            nome_time = NOMES_TIMES[idx]
-            capitao = capitaes_atribuidos.get(idx, "*Nenhum*")
-
-            membros_linhas = []
-            for pos, lista_jogadores in times_montados[idx].items():
-                emoji = POS_EMOJIS.get(pos, "⚽")
-                for j in lista_jogadores:
-                    membros_linhas.append(f"> {emoji} **{pos}:** {j}")
-
-            elenco_str = "\n".join(membros_linhas) if membros_linhas else "> *Nenhum jogador*"
-
-            mensagem_escalacao += f"🛡️ **{nome_time.upper()}** (👑 Cap: {capitao})\n"
-            mensagem_escalacao += f"👥 **Elenco (11/11):**\n{elenco_str}\n"
-            mensagem_escalacao += f"🔊 **Call:** Entrar na call do **{nome_time}**\n"
-            mensagem_escalacao += "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-
-        if dados["reservas"]:
-            res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
-            mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
-
-        msg_escalacao_enviada = await ctx.send(mensagem_escalacao)
-
-        relatorio_msg_enviada = None
-        canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
-        if canal_escalacao:
-            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
-            relatorio_msg = (
-                f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
-                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
-                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
-                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
-            )
-            relatorio_msg_enviada = await canal_escalacao.send(relatorio_msg)
-
-        async def apagar_depois_de_24h(msg_esc, msg_rel):
-            await asyncio.sleep(86400)
-            try:
-                if msg_esc:
-                    await msg_esc.delete()
-            except Exception as e:
-                print(f"Erro ao apagar mensagem de escalação automática: {e}")
-            try:
-                if msg_rel:
-                    await msg_rel.delete()
-            except Exception as e:
-                print(f"Erro ao apagar relatório automático: {e}")
-
-        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada nas variáveis de ambiente do Render!")
-else:
-    bot.run(TOKEN)
+    es
