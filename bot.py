@@ -57,11 +57,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-# --- IDs DOS CANAIS DE PRINTS E ESTATÍSTICAS ---
-CANAL_PRINTS_ID = 1571135705026134067
-CANAL_ESTATISTICAS_ID = 1571136858669187243
-
-VERSAO_ATUAL = "v3.24"
+VERSAO_ATUAL = "v3.16"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -81,7 +77,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Comando !print:** Módulo seguro de estatísticas integrado perfeitamente!"
+                        "• **Estabilidade no Render:** Servidor web ajustado para manter a instância ativa sem quedas precoces."
                     )
                     await channel.send(changelog_msg)
                     
@@ -362,8 +358,7 @@ async def comandos(ctx):
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
             "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
-            "`!remover @Jogador`\n> Remove um participante específico da lista ativa.\n"
-            "`!print` (com imagem ou respondendo a um print)\n> Processa e envia o relatório para o canal de estatísticas."
+            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
         inline=False
     )
@@ -519,79 +514,10 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!print`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
-
-# --- COMANDO !PRINT PARA PROCESSAR ESTATÍSTICAS ---
-@bot.command(name="print")
-async def cmd_print(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    if ctx.channel.id != CANAL_PRINTS_ID:
-        await ctx.send("⚠️ Este comando deve ser usado apenas no canal de envios de prints!", delete_after=10)
-        return
-
-    anexo = None
-    if ctx.message.attachments:
-        for att in ctx.message.attachments:
-            if att.content_type and "image" in att.content_type:
-                anexo = att
-                break
-    elif ctx.message.reference:
-        try:
-            msg_ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if msg_ref.attachments:
-                for att in msg_ref.attachments:
-                    if att.content_type and "image" in att.content_type:
-                        anexo = att
-                        break
-        except Exception:
-            pass
-
-    if not anexo:
-        await ctx.send("⚠️ **Faltou a imagem, Lobinho!** Envie o print junto com o comando `!print` ou marque a mensagem da foto respondendo com o comando.", delete_after=12)
-        return
-
-    processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** Analisando as notas e o desempenho do RoiPau FC...")
-
-    try:
-        canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
-
-        embed = discord.Embed(
-            title="📊 Relatório de Desempenho — RoiPau FC",
-            description="Estatísticas extraídas da última partida do clã:",
-            color=discord.Color.green()
-        )
-        
-        embed.add_field(
-            name="⭐ Destaques por Setor (Notas, Gols e Assistências)", 
-            value="*Print processado via comando !print com sucesso! Em breve faremos a leitura fina das notas por posição.*", 
-            inline=False
-        )
-        
-        embed.set_image(url=anexo.url)
-        embed.set_footer(text=f"Enviado por {ctx.author.display_name} • Gerenciado pelo Bot do RoiPau")
-
-        if canal_estatisticas:
-            await canal_estatisticas.send(embed=embed)
-        else:
-            await ctx.send(embed=embed)
-
-        await processing_msg.edit(content="✅ **Estatísticas processadas e publicadas com sucesso no canal de estatísticas!**")
-        
-        await asyncio.sleep(8)
-        try:
-            await processing_msg.delete()
-        except Exception:
-            pass
-
-    except Exception as e:
-        await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
 
 @bot.command(name="criarlista")
 async def criar_lista(ctx, *, args):
