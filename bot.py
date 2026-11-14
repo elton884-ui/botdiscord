@@ -7,8 +7,6 @@ from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
-from PIL import Image
-import io
 
 # --- SERVIDOR WEB PARA O RENDER (MANTÉM O APP VIVO) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -23,7 +21,7 @@ def run_web_server():
     print(f"🌐 Servidor web rodando na porta {port}")
     server.serve_forever()
 
-# Inicia o servidor web em uma thread dedicada não-daemon para segurar o Render
+# Inicia o servidor web em uma thread dedicada
 Thread(target=run_web_server, daemon=False).start()
 
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
@@ -59,11 +57,7 @@ listas_ativas = carregar_listas()
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
 
-# --- IDs DOS CANAIS DE ESTATÍSTICAS E PRINTS ---
-CANAL_PRINTS_ID = 1571135705026134067
-CANAL_ESTATISTICAS_ID = 1571136858669187243
-
-VERSAO_ATUAL = "v3.18"
+VERSAO_ATUAL = "v3.19"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -81,9 +75,8 @@ async def on_ready():
                 
                 if ultima_versao != VERSAO_ATUAL:
                     changelog_msg = (
-                        f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
-                        "📋 **O que há de novo:**\n"
-                        "• **Módulo de Estatísticas por ID:** Canais de prints e relatórios configurados com IDs fixos para maior precisão!"
+                        f"🚀 **RoiPau FC Bot estabilizado!** (Versão {VERSAO_ATUAL})\n\n"
+                        "📋 **Status:** Sistema de listas e comandos normalizados com sucesso!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -333,56 +326,6 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- EVENTO DE CAPTURA DE PRINTS DE ESTATÍSTICAS USANDO IDs ---
-@bot.event
-async def on_message(message):
-    # Processa comandos normais do bot
-    await bot.process_commands(message)
-
-    # Ignora mensagens do próprio bot
-    if message.author == bot.user:
-        return
-
-    # Verifica se a mensagem foi enviada EXATAMENTE no canal de prints por ID e se tem imagem anexada[cite: 1]
-    if message.channel.id == CANAL_PRINTS_ID and message.attachments:
-        for attachment in message.attachments:
-            if attachment.content_type and "image" in attachment.content_type:
-                
-                processing_msg = await message.channel.send("🔄 **Print recebido, Lobinho!** Analisando as notas e o desempenho do RoiPau FC...")
-
-                try:
-                    # Lê os bytes da imagem enviada[cite: 1]
-                    image_bytes = await attachment.read()
-                    
-                    # Localiza o canal de destino das estatísticas pelo ID fixo
-                    canal_destino = bot.get_channel(CANAL_ESTATISTICAS_ID)
-                    
-                    # Cria o painel formatado em Embed
-                    embed = discord.Embed(
-                        title="📊 Relatório de Desempenho — RoiPau FC",
-                        description="Estatísticas extraídas da última partida do clã:",
-                        color=discord.Color.green()
-                    )
-                    
-                    embed.add_field(
-                        name="⭐ Destaques por Setor (Notas, Gols e Assistências)", 
-                        value="*Módulo de IA configurado! Em breve extrairemos automaticamente as notas individuais de Goleiro, Zagueiro, Ala, Volante, Meia e Atacante[cite: 1].*", 
-                        inline=False
-                    )
-                    
-                    embed.set_image(url=attachment.url)
-                    embed.set_footer(text=f"Enviado por {message.author.display_name} • Gerenciado pelo Bot do RoiPau")
-
-                    if canal_destino:
-                        await canal_destino.send(embed=embed)
-                    else:
-                        await message.channel.send(embed=embed)
-
-                    await processing_msg.edit(content="✅ **Estatísticas processadas e publicadas com sucesso!**")
-
-                except Exception as e:
-                    await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
-
 @bot.command(name="comandos")
 async def comandos(ctx):
     try:
@@ -412,268 +355,4 @@ async def comandos(ctx):
     embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
-            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
-            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🛠️ Sistema & Diagnóstico",
-        value=(
-            "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
-            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente!"
-        ),
-        inline=False
-    )
-
-    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
-    await ctx.send(embed=embed)
-
-@bot.command(name="listasativas", aliases=["ativas"])
-async def listas_ativas_cmd(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    abertas = {mid: dados for mid, dados in listas_ativas.items() if not dados["fechada"]}
-
-    if not abertas:
-        await ctx.send("⚠️ Não há nenhuma lista de convocação aberta no momento!", delete_after=10)
-        return
-
-    embed = discord.Embed(
-        title="📋 CONVOCAÇÕES ABERTAS — ROIPIAU FC",
-        description=f"Total de listas ativas salvas: `{len(abertas)}`\n\u200b",
-        color=discord.Color.gold()
-    )
-
-    for mid, dados in abertas.items():
-        canal = bot.get_channel(dados["channel_id"])
-        nome_canal = f"<#{dados['channel_id']}>" if canal else "Canal desconhecido"
-        
-        info_txt = (
-            f"🏟️ **Canal:** {nome_canal}\n"
-            f"⚽ **Formação:** `{dados['esquema']}` | **Foco:** `{dados['categoria']}`\n"
-            f"👥 **Titulares Inscritos:** `{len(dados['titulares'])}` | ⏳ **Reservas:** `{len(dados['reservas'])}`\n"
-            f"🔗 [Ir para a Mensagem da Lista](https://discord.com/channels/{ctx.guild.id}/{dados['channel_id']}/{mid})"
-        )
-        embed.add_field(name=f"📌 {dados['titulo']}", value=info_txt, inline=False)
-
-    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
-
-    canal_aviso = bot.get_channel(CANAL_AVISO_ID)
-    if canal_aviso:
-        await canal_aviso.send(embed=embed)
-    else:
-        await ctx.send(embed=embed)
-
-@bot.command(name="reabrir", aliases=["restaurar"])
-async def reabrir_lista(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    msg_id_alvo = None
-    dados_alvo = None
-    for mid, dados in reversed(list(listas_ativas.items())):
-        if dados["channel_id"] == ctx.channel.id:
-            msg_id_alvo = mid
-            dados_alvo = dados
-            break
-
-    if not msg_id_alvo or not dados_alvo:
-        await ctx.send("⚠️ Nenhuma lista encontrada neste canal para restaurar!", delete_after=10)
-        return
-
-    dados_alvo["fechada"] = False
-    nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
-    dados_alvo["view"] = nova_view
-
-    channel = bot.get_channel(dados_alvo["channel_id"])
-    
-    try:
-        msg = await channel.fetch_message(msg_id_alvo)
-        novo_embed = gerar_embed_dinamico(
-            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
-            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
-        )
-        await msg.edit(embed=novo_embed, view=nova_view)
-        await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!**", delete_after=12)
-    except (discord.NotFound, discord.HTTPException):
-        novo_embed = gerar_embed_dinamico(
-            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
-            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
-        )
-        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
-        
-        del listas_ativas[msg_id_alvo]
-        listas_ativas[nova_msg.id] = dados_alvo
-        salvar_listas()
-        
-        await ctx.send(f"🔄 **A mensagem anterior tinha sido apagada!** Recriei a lista atualizada com sucesso.", delete_after=12)
-    
-    salvar_listas()
-
-@bot.command(name="limparmortas")
-async def limpar_mortas(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    removidas = 0
-    ids_para_remover = []
-
-    for mid, dados in list(listas_ativas.items()):
-        canal_id = dados.get("channel_id")
-        canal = bot.get_channel(canal_id)
-        
-        if not canal:
-            ids_para_remover.append(mid)
-            removidas += 1
-            continue
-            
-        try:
-            await canal.fetch_message(mid)
-        except discord.NotFound:
-            ids_para_remover.append(mid)
-            removidas += 1
-        except discord.Forbidden:
-            pass
-        except Exception:
-            pass
-
-    for mid in ids_para_remover:
-        del listas_ativas[mid]
-
-    if removidas > 0:
-        salvar_listas()
-        await ctx.send(f"🧹 **Limpeza concluída!** `{removidas}` listas órfãs/apagadas foram removidas do sistema.", delete_after=12)
-    else:
-        await ctx.send("✨ **Tudo limpo!** Nenhuma lista órfã encontrada no sistema.", delete_after=10)
-
-@bot.command(name="teste")
-async def teste(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    ping_ms = round(bot.latency * 1000)
-    
-    feedback_msg = (
-        "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional\n"
-        f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
-        f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
-    )
-    
-    await ctx.send(feedback_msg, delete_after=15)
-
-@bot.command(name="criarlista")
-async def criar_lista(ctx, *, args):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    try:
-        params = [p.strip() for p in args.split(";")]
-        esquema, categoria, titulo, _, _, _ = params
-
-        titulares = []
-        reservas = []
-        capitaes = {0: None, 1: None, 2: None, 3: None}
-        qtd_times_ativos = 2  # Começa sempre com 2 times ativos
-
-        view = ListaButtonsDinamica(esquema, qtd_times=qtd_times_ativos)
-        embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos)
-        
-        msg = await ctx.send(content="@everyone", embed=embed, view=view)
-
-        listas_ativas[msg.id] = {
-            "titulo": titulo,
-            "esquema": esquema,
-            "categoria": categoria,
-            "titulares": titulares,
-            "reservas": reservas,
-            "capitaes": capitaes,
-            "channel_id": ctx.channel.id,
-            "fechada": False,
-            "view": view,
-            "qtd_times_ativos": qtd_times_ativos
-        }
-        salvar_listas()
-    except Exception:
-        await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
-
-@bot.command(name="limpar")
-async def limpar(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    msg_id = None
-    if ctx.message.reference:
-        msg_id = ctx.message.reference.message_id
-    else:
-        for mid, dados in reversed(list(listas_ativas.items())):
-            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Nenhuma lista ativa encontrada para limpar!", delete_after=10)
-        return
-
-    dados = listas_ativas[msg_id]
-    dados["titulares"] = []
-    dados["reservas"] = []
-    dados["qtd_times_ativos"] = 2
-    dados["capitaes"] = {i: None for i in range(4)}
-    salvar_listas()
-
-    nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=2)
-    dados["view"] = nova_view
-
-    channel = bot.get_channel(dados["channel_id"])
-    try:
-        msg = await channel.fetch_message(msg_id)
-        novo_embed = gerar_embed_dinamico(
-            dados["titulo"], dados["esquema"], dados["categoria"], 
-            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
-        )
-        await msg.edit(embed=novo_embed, view=nova_view)
-    except Exception:
-        pass
-    
-    await ctx.send("🧹 **Lista limpa com sucesso!** Todos os inscritos, reservas e capitães foram resetados.", delete_after=10)
-
-@bot.command(name="simular")
-async def simular(ctx, quantidade: int):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    msg_id = None
-    if ctx.message.reference:
-        msg_id = ctx.message.reference.message_id
-    else:
-        for mid, dados in reversed(list(listas_ativas.items())):
-            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
-                msg_id = mid
-                break
-
-    if not msg_id or msg_id not in listas_ativas:
-        await ctx.send("⚠️ Crie uma lista primeiro com `!criarlista` antes de simular!", delete_after=10)
-        return
-
-    dados = listas_ativas[msg_id]
-    es
+            "`!simular
