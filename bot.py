@@ -71,7 +71,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.42"
+VERSAO_ATUAL = "v3.43"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +91,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Botão de Retry Interativo:** Se houver oscilação de alta demanda, um botão `🔄 Tentar Novamente` aparecerá para você forçar a análise com 1 clique!"
+                        "• **Blindagem contra Erro 429 (Resource Exhausted):** Tratamento inteligente de limite de cota com pausas automáticas e fallback de modelos!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -341,7 +341,7 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- VIEW COM BOTÃO DE RETRY CASO OCORRA FALHA ---
+# --- VIEW COM BOTÃO DE RETRY ---
 class RetryPrintView(discord.ui.View):
     def __init__(self, ctx, anexo_url):
         super().__init__(timeout=180)
@@ -351,7 +351,6 @@ class RetryPrintView(discord.ui.View):
     @discord.ui.button(label="🔄 Tentar Análise Novamente", style=discord.ButtonStyle.primary)
     async def retry_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("🔄 Reiniciando a análise do print, aguarde...", ephemeral=True)
-        # Dispara o comando de print novamente simulando a mesma imagem
         await processar_print_ia(self.ctx, self.anexo_url, interaction.message)
 
 async def processar_print_ia(ctx, image_url, status_msg):
@@ -373,30 +372,37 @@ async def processar_print_ia(ctx, image_url, status_msg):
             "nome, nota, gols, assistencias para que possamos atualizar o banco de dados do clã."
         )
 
-        max_tentativas = 3
+        # Múltiplos modelos para fallback automático caso ocorra limite de cota (429) ou sobrecarga (503)
+        modelos_para_tentar = ['gemini-3.8-flash', 'gemini-1.5-flash']
         sucesso = False
         response = None
         ultimo_erro = ""
 
-        for tentativa in range(1, max_tentativas + 1):
-            try:
-                response = gemini_client.models.generate_content(
-                    model='gemini-3.8-flash',
-                    contents=[prompt, pil_image]
-                )
-                if response and response.text:
-                    sucesso = True
-                    break
-            except Exception as e:
-                ultimo_erro = str(e)
-                if tentativa < max_tentativas:
-                    await asyncio.sleep(2)
-                    continue
+        for modelo in modelos_para_tentar:
+            if sucesso:
+                break
+            for tentativa in range(1, 4):
+                try:
+                    response = gemini_client.models.generate_content(
+                        model=modelo,
+                        contents=[prompt, pil_image]
+                    )
+                    if response and response.text:
+                        sucesso = True
+                        break
+                except Exception as e:
+                    ultimo_erro = str(e)
+                    # Se for erro 429 ou 503, espera um pouco mais antes de tentar de novo
+                    if "429" in ultimo_erro or "503" in ultimo_erro or "exhausted" in ultimo_erro.lower() or "unavailable" in ultimo_erro.lower():
+                        await asyncio.sleep(3 * tentativa)
+                        continue
+                    else:
+                        break
 
         if not sucesso:
             view_retry = RetryPrintView(ctx, image_url)
             await status_msg.edit(
-                content=f"❌ O Google está com muita demanda no momento. Clique no botão abaixo para tentar de novo! (Erro: `{ultimo_erro}`)",
+                content=f"❌ O Google está com muita demanda no momento (Limite de cota excedido). Clique no botão abaixo para tentar de novo! (Erro: `{ultimo_erro}`)",
                 view=view_retry
             )
             return
@@ -461,7 +467,7 @@ async def processar_print_ia(ctx, image_url, status_msg):
     except Exception as e:
         await status_msg.edit(content=f"❌ Erro crítico ao processar o print: `{e}`")
 
-# --- COMANDO !PRINT COM SUPORTE A BOTÃO DE RETRY ---
+# --- COMANDO !PRINT COM SUPORTE A RETRY E FALLBACK ---
 @bot.command(name="print")
 async def cmd_print(ctx):
     if ctx.channel.id != CANAL_PRINTS_ID:
