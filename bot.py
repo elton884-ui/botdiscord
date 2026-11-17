@@ -65,7 +65,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.33"
+VERSAO_ATUAL = "v3.35"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -85,7 +85,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Gemini Vision Blindado:** Correção de parâmetros e múltiplos fallbacks para leitura perfeita de prints!"
+                        "• **Relatório Simplificado:** O comando `!print` agora destaca apenas o Craque do Jogo (MVP) e o Segundo Melhor em Campo!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -335,7 +335,7 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- COMANDO !PRINT COM GEMINI VISION, RETRY E FALLBACK AUTOMÁTICO ---
+# --- COMANDO !PRINT COM DESTAQUE APENAS PARA O MVP E 2º MELHOR ---
 @bot.command(name="print")
 async def cmd_print(ctx):
     if ctx.channel.id != CANAL_PRINTS_ID:
@@ -365,65 +365,37 @@ async def cmd_print(ctx):
 
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida...")
 
-    max_tentativas = 5
-    sucesso = False
-    response = None
-    ultimo_erro = ""
-    
-    modelos_para_tentar = ['gemini-3.8-flash', 'gemini-2.5-flash']
-
-    for modelo_atual in modelos_para_tentar:
-        if sucesso:
-            break
-            
-        for tentativa in range(1, max_tentativas + 1):
-            try:
-                image_io = io.BytesIO()
-                await anexo.save(image_io)
-                image_io.seek(0)
-
-                pil_image = PILImage.open(image_io)
-
-                prompt = (
-                    "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
-                    "Extraia os dados principais da partida de forma organizada: "
-                    "nome dos jogadores, notas médias, gols, assistências e destaques por setor. "
-                    "Seja direto e formate de maneira limpa para exibição em um relatório de Discord."
-                )
-
-                response = gemini_client.models.generate_content(
-                    model=modelo_atual,
-                    contents=[prompt, pil_image]
-                )
-
-                if response and response.text:
-                    sucesso = True
-                    break
-            except Exception as e:
-                ultimo_erro = str(e)
-                if "503" in ultimo_erro or "unavailable" in ultimo_erro.lower() or "high demand" in ultimo_erro.lower():
-                    if tentativa < max_tentativas:
-                        await asyncio.sleep(2)
-                        continue
-                else:
-                    break
-
-    if not sucesso:
-        await processing_msg.edit(content=f"❌ Os servidores do Google estão sobrecarregados. Tente novamente em instantes! (Erro: `{ultimo_erro}`)")
-        return
-
     try:
+        image_io = io.BytesIO()
+        await anexo.save(image_io)
+        image_io.seek(0)
+
+        pil_image = PILImage.open(image_io)
+
+        prompt = (
+            "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
+            "Identifique e liste APENAS os dois melhores jogadores da partida com base nas notas: "
+            "1. **Craque do Jogo (MVP):** O jogador com a nota mais alta. "
+            "2. **Segundo Melhor em Campo:** O segundo jogador com a maior nota. "
+            "Seja direto, limpo e formate com emojis para exibição em Discord."
+        )
+
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, pil_image]
+        )
+
         relatorio_ia = response.text if response and response.text else "Não foi possível extrair os dados da imagem."
         canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
 
         embed = discord.Embed(
-            title="📊 Relatório Inteligente — RoiPau FC",
-            description="Estatísticas extraídas via Gemini Vision:",
+            title="📊 Destaques da Partida — RoiPau FC",
+            description="Os melhores em campo segundo a Inteligência Artificial:",
             color=discord.Color.green()
         )
         
         embed.add_field(
-            name="⭐ Análise da Partida", 
+            name="⭐ Craque e 2º Melhor", 
             value=f"{relatorio_ia[:1000]}", 
             inline=False
         )
@@ -445,7 +417,7 @@ async def cmd_print(ctx):
             pass
 
     except Exception as e:
-        await processing_msg.edit(content=f"❌ Erro ao enviar o relatório formatado: `{e}`")
+        await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
 
 @bot.command(name="comandos")
 async def comandos(ctx):
