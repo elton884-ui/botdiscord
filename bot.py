@@ -528,13 +528,10 @@ async def teste(ctx):
     
     await ctx.send(feedback_msg, delete_after=15)
 
-# --- COMANDO !PRINT COM TESSERACT OCR (AJUSTADO) ---
+# --- COMANDO !PRINT COM TESSERACT OCR (ESTÁVEL) ---
 @bot.command(name="print")
 async def cmd_print(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
+    # Removido o ctx.message.delete() para o Discord não perder o print de referência
 
     if ctx.channel.id != CANAL_PRINTS_ID:
         await ctx.send("⚠️ Este comando deve ser usado apenas no canal de envios de prints!", delete_after=10)
@@ -564,7 +561,7 @@ async def cmd_print(ctx):
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** O Tesseract OCR está lendo o texto e as estatísticas...")
 
     try:
-        # Salva o anexo diretamente usando os recursos nativos do discord.py (sem erro de link)
+        # Salva o anexo direto para a memória sem perder o link
         image_io = io.BytesIO()
         await anexo.save(image_io)
         image_io.seek(0)
