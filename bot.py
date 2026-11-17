@@ -1,10 +1,18 @@
+import os
+import re
+import random
+import json
+import asyncio
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import discord
+from discord.ext import commands
 import pytesseract
 from PIL import Image
 import io
 
-# Informa ao pytesseract onde o executável do Tesseract está no Linux do Render
+# Aponta o caminho exato do Tesseract no Linux do Render
 pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
-import aiohttp
 
 # --- SERVIDOR WEB PARA O RENDER (MANTÉM O APP VIVO) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
