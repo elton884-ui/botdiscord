@@ -65,7 +65,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.31"
+VERSAO_ATUAL = "v3.33"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -85,7 +85,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Relatórios com Gemini Vision:** O comando `!print` agora analisa os prints das partidas automaticamente com Inteligência Artificial!"
+                        "• **Gemini Vision Blindado:** Correção de parâmetros e múltiplos fallbacks para leitura perfeita de prints!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -335,7 +335,7 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- COMANDO !PRINT COM GEMINI VISION E RETRY AUTOMÁTICO ---
+# --- COMANDO !PRINT COM GEMINI VISION, RETRY E FALLBACK AUTOMÁTICO ---
 @bot.command(name="print")
 async def cmd_print(ctx):
     if ctx.channel.id != CANAL_PRINTS_ID:
@@ -369,43 +369,47 @@ async def cmd_print(ctx):
     sucesso = False
     response = None
     ultimo_erro = ""
+    
+    modelos_para_tentar = ['gemini-3.8-flash', 'gemini-2.5-flash']
 
-    for tentativa in range(1, max_tentativas + 1):
-        try:
-            image_io = io.BytesIO()
-            await anexo.save(image_io)
-            image_io.seek(0)
+    for modelo_atual in modelos_para_tentar:
+        if sucesso:
+            break
+            
+        for tentativa in range(1, max_tentativas + 1):
+            try:
+                image_io = io.BytesIO()
+                await anexo.save(image_io)
+                image_io.seek(0)
 
-            pil_image = PILImage.open(image_io)
+                pil_image = PILImage.open(image_io)
 
-            prompt = (
-                "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
-                "Extraia os dados principais da partida de forma organizada: "
-                "nome dos jogadores, notas médias, gols, assistências e destaques por setor. "
-                "Seja direto e formate de maneira limpa para exibição em um relatório de Discord."
-            )
+                prompt = (
+                    "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
+                    "Extraia os dados principais da partida de forma organizada: "
+                    "nome dos jogadores, notas médias, gols, assistências e destaques por setor. "
+                    "Seja direto e formate de maneira limpa para exibição em um relatório de Discord."
+                )
 
-            response = gemini_client.models.generate_content(
-            model=modelo_atual,
-            contents=[prompt, pil_image]
-        )
+                response = gemini_client.models.generate_content(
+                    model=modelo_atual,
+                    contents=[prompt, pil_image]
+                )
 
-            if response and response.text:
-                sucesso = True
-                break
-        except Exception as e:
-            ultimo_erro = str(e)
-            # Se for erro 503 ou alta demanda, aguarda 2 segundos e tenta de novo
-            if "503" in ultimo_erro or "unavailable" in ultimo_erro.lower() or "high demand" in ultimo_erro.lower():
-                if tentativa < max_tentativas:
-                    await asyncio.sleep(2)
-                    continue
-            else:
-                # Se for outro tipo de erro crítico, para imediatamente
-                break
+                if response and response.text:
+                    sucesso = True
+                    break
+            except Exception as e:
+                ultimo_erro = str(e)
+                if "503" in ultimo_erro or "unavailable" in ultimo_erro.lower() or "high demand" in ultimo_erro.lower():
+                    if tentativa < max_tentativas:
+                        await asyncio.sleep(2)
+                        continue
+                else:
+                    break
 
     if not sucesso:
-        await processing_msg.edit(content=f"❌ O Google está com muita demanda no momento após 5 tentativas. Tente novamente em instantes! (Erro: `{ultimo_erro}`)")
+        await processing_msg.edit(content=f"❌ Os servidores do Google estão sobrecarregados. Tente novamente em instantes! (Erro: `{ultimo_erro}`)")
         return
 
     try:
