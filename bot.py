@@ -335,7 +335,7 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- COMANDO !PRINT COM GEMINI VISION ---
+# --- COMANDO !PRINT COM GEMINI VISION E RETRY AUTOMÁTICO ---
 @bot.command(name="print")
 async def cmd_print(ctx):
     if ctx.channel.id != CANAL_PRINTS_ID:
@@ -365,27 +365,51 @@ async def cmd_print(ctx):
 
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida...")
 
+    max_tentativas = 5
+    sucesso = False
+    response = None
+    ultimo_erro = ""
+
+    for tentativa in range(1, max_tentativas + 1):
+        try:
+            image_io = io.BytesIO()
+            await anexo.save(image_io)
+            image_io.seek(0)
+
+            pil_image = PILImage.open(image_io)
+
+            prompt = (
+                "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
+                "Extraia os dados principais da partida de forma organizada: "
+                "nome dos jogadores, notas médias, gols, assistências e destaques por setor. "
+                "Seja direto e formate de maneira limpa para exibição em um relatório de Discord."
+            )
+
+            response = gemini_client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=[pil_image, prompt]
+            )
+
+            if response and response.text:
+                sucesso = True
+                break
+        except Exception as e:
+            ultimo_erro = str(e)
+            # Se for erro 503 ou alta demanda, aguarda 2 segundos e tenta de novo
+            if "503" in ultimo_erro or "unavailable" in ultimo_erro.lower() or "high demand" in ultimo_erro.lower():
+                if tentativa < max_tentativas:
+                    await asyncio.sleep(2)
+                    continue
+            else:
+                # Se for outro tipo de erro crítico, para imediatamente
+                break
+
+    if not sucesso:
+        await processing_msg.edit(content=f"❌ O Google está com muita demanda no momento após 5 tentativas. Tente novamente em instantes! (Erro: `{ultimo_erro}`)")
+        return
+
     try:
-        image_io = io.BytesIO()
-        await anexo.save(image_io)
-        image_io.seek(0)
-
-        pil_image = PILImage.open(image_io)
-
-        prompt = (
-            "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
-            "Extraia os dados principais da partida de forma organizada: "
-            "nome dos jogadores, notas médias, gols, assistências e destaques por setor. "
-            "Seja direto e formate de maneira limpa para exibição em um relatório de Discord."
-        )
-
-        response = gemini_client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=[pil_image, prompt]
-        )
-
         relatorio_ia = response.text if response and response.text else "Não foi possível extrair os dados da imagem."
-
         canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
 
         embed = discord.Embed(
@@ -417,7 +441,7 @@ async def cmd_print(ctx):
             pass
 
     except Exception as e:
-        await processing_msg.edit(content=f"❌ Erro ao processar o print com a Gemini: `{e}`")
+        await processing_msg.edit(content=f"❌ Erro ao enviar o relatório formatado: `{e}`")
 
 @bot.command(name="comandos")
 async def comandos(ctx):
