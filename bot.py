@@ -70,7 +70,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.75-Completa"
+VERSAO_ATUAL = "v3.76-LegendaTopo"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -90,7 +90,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Módulo de Estatísticas Integrado:** Leitura automática no canal fechado com envio de resultados e ranking semanal por posições!"
+                        "• **Ranking Aprimorado:** Legenda de ícones posicionada no topo do embed e remoção da letra 'j' nas partidas para um visual mais limpo!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -184,7 +184,11 @@ async def on_message(message):
 
                 embed_rank = discord.Embed(
                     title="🏆 RANKING E MELHORES DA SEMANA — ROIPIAU FC",
-                    description=f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\u200b",
+                    description=(
+                        f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\n"
+                        "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
+                        "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+                    ),
                     color=discord.Color.gold()
                 )
 
@@ -193,7 +197,7 @@ async def on_message(message):
                 for nome, info in ranking_ordenado:
                     media = info["soma_notas"] / info["partidas"] if info["partidas"] > 0 else 0
                     pos = info.get("posicao", "MEI")
-                    linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {info['gols']} | 🎯 {info['assistencias']} ({info['partidas']}j)"
+                    linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {info['gols']} | 🎯 {info['assistencias']} | 🎮 {info['partidas']}"
                     
                     if pos in ["ATD", "ATE", "ATA"]:
                         posicoes_dict["ATAQUE"].append(linha_txt)
