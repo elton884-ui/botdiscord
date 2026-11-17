@@ -52,7 +52,6 @@ def salvar_json(arquivo, dados):
         print(f"⚠️ Erro ao salvar {arquivo}: {e}")
 
 listas_ativas = carregar_json(ARQUIVO_DADOS, {})
-# Garante chaves inteiras para o dicionário de listas ativas
 listas_ativas = {int(k): v for k, v in listas_ativas.items()}
 
 estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
@@ -70,7 +69,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.76-LegendaTopo"
+VERSAO_ATUAL = "v3.80-SelecaoErelatorio"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -90,7 +89,8 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Ranking Aprimorado:** Legenda de ícones posicionada no topo do embed e remoção da letra 'j' nas partidas para um visual mais limpo!"
+                        "• **Seleção da Semana:** Quadro especial com os melhores de cada posição integrado ao ranking!\n"
+                        "• **Relatório Final & Reset:** Adicionado comando `!relatoriodasemana` para premiar os craques e zerar o ciclo semanal automaticamente."
                     )
                     await channel.send(changelog_msg)
                     
@@ -126,9 +126,67 @@ async def on_message(message):
     # Se a mensagem foi enviada no canal fechado de dados (dados-estatisticas)
     if message.channel.id == CANAL_DADOS_FECHADO_ID:
         conteudo = message.content.strip()
-        
-        # Formato esperado por linha: Nome | Posição | Gols | Assistências | Nota
-        # Exemplo: LuLa | ATE | 2 | 2 | 10.0
+
+        # Comando manual para fechar a semana e resetar
+        if conteudo.lower() == "!relatoriodasemana":
+            jogadores = estatisticas_cla.get("jogadores", {})
+            if not jogadores:
+                await message.channel.send("⚠️ Não há dados estatísticos registrados para gerar o relatório!", delete_after=10)
+                return
+
+            # Descobre o melhor de cada categoria
+            melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
+            notas_melhores = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
+
+            for nome, info in jogadores.items():
+                media = info["soma_notas"] / info["partidas"] if info["partidas"] > 0 else 0
+                pos = info.get("posicao", "MEI")
+
+                if pos in ["ATD", "ATE", "ATA"]:
+                    cat = "ATAQUE"
+                elif pos in ["GL", "GOL"]:
+                    cat = "GOLEIRO"
+                elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
+                    cat = "DEFESA"
+                else:
+                    cat = "MEIO"
+
+                if media > notas_melhores[cat]:
+                    notas_melhores[cat] = media
+                    melhores[cat] = (nome, pos, media, info['gols'], info['assistencias'], info['partidas'])
+
+            # Envia o relatório de parabéns no canal de melhores da semana
+            canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
+            if canal_ranking:
+                embed_rel = discord.Embed(
+                    title="🎉 PREMIAÇÃO — SELEÇÃO DA SEMANA ROIPIAU FC 🏆",
+                    description="Parabéns aos craques que dominaram as partidas e foram os melhores de suas posições nesta semana! 🌟\n\u200b",
+                    color=discord.Color.brand_green()
+                )
+
+                emojis_cat = {"ATAQUE": "🎯", "MEIO": "⚙️", "DEFESA": "🛡️", "GOLEIRO": "🧤"}
+                for cat, dados_craque in melhores.items():
+                    if dados_craque:
+                        nome, pos, media, gols, assists, part = dados_craque
+                        txt_craque = (
+                            f"👑 **{nome}** (`{pos}`)\n"
+                            f"⭐ Média: **{media:.2f}** | ⚽ Gols: `{gols}` | 🎯 Assists: `{assists}` | 🎮 Jogos: `{part}`"
+                        )
+                        embed_rel.add_field(name=f"{emojis_cat[cat]} Craque do {cat}", value=txt_craque, inline=False)
+
+                embed_rel.set_footer(text="RoiPau FC • O ciclo semanal foi encerrado e zerado para a próxima temporada! ⚽🔥")
+                await canal_ranking.send(embed=embed_rel)
+
+            # Reseta o banco de dados estatísticos
+            estatisticas_cla["jogadores"] = {}
+            estatisticas_cla["partidas_totais"] = 0
+            salvar_estats()
+
+            await message.add_reaction("✅")
+            await message.channel.send("🏆 **Relatório final gerado com sucesso!** O banco de dados estatístico foi zerado e está pronto para um novo ciclo.", delete_after=15)
+            return
+
+        # Processamento normal de partida
         linhas = conteudo.split("\n")
         jogadores_processados = []
 
@@ -172,7 +230,7 @@ async def on_message(message):
                 embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
                 await canal_res.send(embed=embed_res)
 
-            # 2. Atualiza e posta o Ranking Semanal no canal de melhores da semana
+            # 2. Atualiza e posta o Ranking Semanal + Seleção da Semana no canal correspondente
             canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
             if canal_ranking:
                 jogadores = estatisticas_cla.get("jogadores", {})
@@ -183,7 +241,7 @@ async def on_message(message):
                 )
 
                 embed_rank = discord.Embed(
-                    title="🏆 RANKING E MELHORES DA SEMANA — ROIPIAU FC",
+                    title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
                     description=(
                         f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\n"
                         "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
@@ -192,7 +250,10 @@ async def on_message(message):
                     color=discord.Color.gold()
                 )
 
-                # Separa por categorias de posição
+                # Descobre o melhor de cada categoria para montar a Seleção da Semana
+                melhores_semana = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
+                notas_melhores_semana = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
+
                 posicoes_dict = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
                 for nome, info in ranking_ordenado:
                     media = info["soma_notas"] / info["partidas"] if info["partidas"] > 0 else 0
@@ -200,19 +261,38 @@ async def on_message(message):
                     linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {info['gols']} | 🎯 {info['assistencias']} | 🎮 {info['partidas']}"
                     
                     if pos in ["ATD", "ATE", "ATA"]:
-                        posicoes_dict["ATAQUE"].append(linha_txt)
+                        cat = "ATAQUE"
                     elif pos in ["GL", "GOL"]:
-                        posicoes_dict["GOLEIRO"].append(linha_txt)
+                        cat = "GOLEIRO"
                     elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
-                        posicoes_dict["DEFESA"].append(linha_txt)
+                        cat = "DEFESA"
                     else:
-                        posicoes_dict["MEIO"].append(linha_txt)
+                        cat = "MEIO"
 
+                    posicoes_dict[cat].append(linha_txt)
+
+                    if media > notas_melhores_semana[cat]:
+                        notas_melhores_semana[cat] = media
+                        melhores_semana[cat] = (nome, pos, media)
+
+                # Adiciona o quadro exclusivo da Seleção da Semana no topo
+                selecao_txt = []
+                emojis_sel = {"ATAQUE": "🎯 Ataque", "MEIO": "⚙️ Meio", "DEFESA": "🛡️ Defesa", "GOLEIRO": "🧤 Goleiro"}
+                for cat, dados_craque in melhores_semana.items():
+                    if dados_craque:
+                        nome_c, pos_c, med_c = dados_craque
+                        selecao_txt.append(f"• **{emojis_sel[cat]}:** {nome_c} (`{pos_c}`) — ⭐ **{med_c:.2f}**")
+                
+                if selecao_txt:
+                    embed_rank.add_field(name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)", value="\n".join(selecao_txt), inline=False)
+                    embed_rank.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
+
+                # Adiciona as categorias completas logo abaixo
                 for cat, lista_jog in posicoes_dict.items():
                     if lista_jog:
-                        embed_rank.add_field(name=f"🛡️ Categoria: {cat}", value="\n".join(lista_jog), inline=False)
+                        embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
 
-                embed_rank.set_footer(text="RoiPau FC Bot • Atualização automática semanal ⚽🔥")
+                embed_rank.set_footer(text="RoiPau FC Bot • Use !relatoriodasemana no canal fechado para fechar o ciclo ⚽🔥")
                 
                 # Apaga mensagens anteriores do bot no canal de ranking para manter limpo
                 async for msg in canal_ranking.history(limit=5):
@@ -227,7 +307,6 @@ async def on_message(message):
             await message.add_reaction("✅")
             return
 
-    # Garante que os comandos normais continuem funcionando sem interferência
     await bot.process_commands(message)
 
 FORMAGOES = {
