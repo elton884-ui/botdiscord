@@ -65,7 +65,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.30"
+VERSAO_ATUAL = "v3.31"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -1039,3 +1039,22 @@ async def fechar_lista(ctx):
             await asyncio.sleep(86400)
             try:
                 if msg_esc:
+                    await msg_esc.delete()
+            except Exception as e:
+                print(f"Erro ao apagar mensagem de escalação automática: {e}")
+            try:
+                if msg_rel:
+                    await msg_rel.delete()
+            except Exception as e:
+                print(f"Erro ao apagar relatório automático: {e}")
+
+        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
+
+    except Exception as e:
+        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
+
+TOKEN = os.environ.get("DISCORD_TOKEN")
+if not TOKEN:
+    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada nas variáveis de ambiente do Render!")
+else:
+    bot.run(TOKEN)
