@@ -71,7 +71,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.41"
+VERSAO_ATUAL = "v3.42"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +91,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Blindagem contra Erro 503:** O comando `!print` agora possui sistema de reentupimento e tentativas automáticas (Retry) para evitar falhas por alta demanda!"
+                        "• **Botão de Retry Interativo:** Se houver oscilação de alta demanda, um botão `🔄 Tentar Novamente` aparecerá para você forçar a análise com 1 clique!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -341,46 +341,30 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- COMANDO !PRINT COM RETRY AUTOMÁTICO (BLINDAGEM CONTRA 503) ---
-@bot.command(name="print")
-async def cmd_print(ctx):
-    if ctx.channel.id != CANAL_PRINTS_ID:
-        await ctx.send("⚠️ Este comando deve ser usado apenas no canal de envios de prints!", delete_after=10)
-        return
+# --- VIEW COM BOTÃO DE RETRY CASO OCORRA FALHA ---
+class RetryPrintView(discord.ui.View):
+    def __init__(self, ctx, anexo_url):
+        super().__init__(timeout=180)
+        self.ctx = ctx
+        self.anexo_url = anexo_url
 
-    anexo = None
-    if ctx.message.attachments:
-        for att in ctx.message.attachments:
-            if att.content_type and "image" in att.content_type:
-                anexo = att
-                break
-    elif ctx.message.reference:
-        try:
-            msg_ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if msg_ref.attachments:
-                for att in msg_ref.attachments:
-                    if att.content_type and "image" in att.content_type:
-                        anexo = att
-                        break
-        except Exception:
-            pass
+    @discord.ui.button(label="🔄 Tentar Análise Novamente", style=discord.ButtonStyle.primary)
+    async def retry_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔄 Reiniciando a análise do print, aguarde...", ephemeral=True)
+        # Dispara o comando de print novamente simulando a mesma imagem
+        await processar_print_ia(self.ctx, self.anexo_url, interaction.message)
 
-    if not anexo:
-        await ctx.send("⚠️ **Faltou a imagem, Lobinho!** Envie o print junto com o comando `!print` ou marque a mensagem da foto respondendo com o comando.", delete_after=12)
-        return
-
-    processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida e atualizando o banco de dados...")
-
-    max_tentativas = 5
-    sucesso = False
-    response = None
-    ultimo_erro = ""
-
+async def processar_print_ia(ctx, image_url, status_msg):
     try:
-        image_io = io.BytesIO()
-        await anexo.save(image_io)
-        image_io.seek(0)
-        pil_image = PILImage.open(image_io)
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    await status_msg.edit(content="❌ Erro ao baixar a imagem do print para reanálise.")
+                    return
+                image_bytes = await resp.read()
+
+        pil_image = PILImage.open(io.BytesIO(image_bytes))
 
         prompt = (
             "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
@@ -388,6 +372,11 @@ async def cmd_print(ctx):
             "2. Retorne também em formato JSON puro (dentro de um bloco de código json) uma lista com todos os jogadores visíveis contendo: "
             "nome, nota, gols, assistencias para que possamos atualizar o banco de dados do clã."
         )
+
+        max_tentativas = 3
+        sucesso = False
+        response = None
+        ultimo_erro = ""
 
         for tentativa in range(1, max_tentativas + 1):
             try:
@@ -400,15 +389,16 @@ async def cmd_print(ctx):
                     break
             except Exception as e:
                 ultimo_erro = str(e)
-                if "503" in ultimo_erro or "unavailable" in ultimo_erro.lower() or "high demand" in ultimo_erro.lower():
-                    if tentativa < max_tentativas:
-                        await asyncio.sleep(2)
-                        continue
-                else:
-                    break
+                if tentativa < max_tentativas:
+                    await asyncio.sleep(2)
+                    continue
 
         if not sucesso:
-            await processing_msg.edit(content=f"❌ O Google está com muita demanda após {max_tentativas} tentativas. Tente novamente em instantes! (Erro: `{ultimo_erro}`)")
+            view_retry = RetryPrintView(ctx, image_url)
+            await status_msg.edit(
+                content=f"❌ O Google está com muita demanda no momento. Clique no botão abaixo para tentar de novo! (Erro: `{ultimo_erro}`)",
+                view=view_retry
+            )
             return
 
         texto_resposta = response.text if response and response.text else "Não foi possível extrair os dados da imagem."
@@ -452,7 +442,7 @@ async def cmd_print(ctx):
             inline=False
         )
         
-        embed.set_image(url=anexo.url)
+        embed.set_image(url=image_url)
         embed.set_footer(text=f"Enviado por {ctx.author.display_name} • Banco de Dados RoiPau FC")
 
         if canal_estatisticas:
@@ -460,16 +450,47 @@ async def cmd_print(ctx):
         else:
             await ctx.send(embed=embed)
 
-        await processing_msg.edit(content="✅ **Análise concluída, banco de dados atualizado e relatório publicado!**")
+        await status_msg.edit(content="✅ **Análise concluída, banco de dados atualizado e relatório publicado!**", view=None)
         
         await asyncio.sleep(8)
         try:
-            await processing_msg.delete()
+            await status_msg.delete()
         except Exception:
             pass
 
     except Exception as e:
-        await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
+        await status_msg.edit(content=f"❌ Erro crítico ao processar o print: `{e}`")
+
+# --- COMANDO !PRINT COM SUPORTE A BOTÃO DE RETRY ---
+@bot.command(name="print")
+async def cmd_print(ctx):
+    if ctx.channel.id != CANAL_PRINTS_ID:
+        await ctx.send("⚠️ Este comando deve ser usado apenas no canal de envios de prints!", delete_after=10)
+        return
+
+    anexo = None
+    if ctx.message.attachments:
+        for att in ctx.message.attachments:
+            if att.content_type and "image" in att.content_type:
+                anexo = att
+                break
+    elif ctx.message.reference:
+        try:
+            msg_ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if msg_ref.attachments:
+                for att in msg_ref.attachments:
+                    if att.content_type and "image" in att.content_type:
+                        anexo = att
+                        break
+        except Exception:
+            pass
+
+    if not anexo:
+        await ctx.send("⚠️ **Faltou a imagem, Lobinho!** Envie o print junto com o comando `!print` ou marque a mensagem da foto respondendo com o comando.", delete_after=12)
+        return
+
+    processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida e atualizando o banco de dados...")
+    await processar_print_ia(ctx, anexo.url, processing_msg)
 
 # --- COMANDO DE RANKING ---
 @bot.command(name="ranking")
