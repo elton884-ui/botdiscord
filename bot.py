@@ -71,7 +71,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.44"
+VERSAO_ATUAL = "v3.45"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +91,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Painel Completo Restaurado:** A lista completa com todos os comandos de gestão de elencos e estatísticas voltou ao normal!"
+                        "• **Comando !teste Restaurado:** O comando de verificação rápida está de volta e operando!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -494,6 +494,15 @@ async def cmd_print(ctx):
 
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida e atualizando o banco de dados...")
     await processar_print_ia(ctx, anexo.url, processing_msg)
+
+# --- COMANDO DE TESTE ---
+@bot.command(name="teste")
+async def teste(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+    await ctx.send("🤖 **RoiPau FC Bot operando 100% e na escuta, Lobinho!** ⚽🔥", delete_after=10)
 
 # --- COMANDOS DE GESTÃO DE LISTAS, SIMULAÇÃO E TIMES ---
 @bot.command(name="criarlista")
@@ -988,7 +997,8 @@ async def comandos(ctx):
             "`!print` (com imagem)\n> Envia print para análise de MVP e banco de dados.\n"
             "`!ranking`\n> Mostra o top artilheiros e assistências.\n"
             "`!relatoriosemanal`\n> Gera o balanço completo do clã.\n"
-            "`!resetartemporada`\n> Zera as estatísticas para nova temporada."
+            "`!resetartemporada`\n> Zera as estatísticas para nova temporada.\n"
+            "`!teste`\n> Testa se o bot está ativo."
         ),
         inline=False
     )
