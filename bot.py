@@ -3,10 +3,13 @@ import re
 import random
 import json
 import asyncio
+import io
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
+from google import genai
+from PIL import Image as PILImage
 
 # --- SERVIDOR WEB PARA O RENDER (MANTÉM O APP VIVO) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -30,6 +33,9 @@ intents.message_content = True
 intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# --- INICIALIZAÇÃO DA GEMINI API ---
+gemini_client = genai.Client()
 
 # --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON ---
 ARQUIVO_DADOS = "listas_ativas.json"
@@ -56,8 +62,10 @@ listas_ativas = carregar_listas()
 
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
+CANAL_PRINTS_ID = 1572265046002638878
+CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.16"
+VERSAO_ATUAL = "v3.30"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -77,7 +85,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Estabilidade no Render:** Servidor web ajustado para manter a instância ativa sem quedas precoces."
+                        "• **Relatórios com Gemini Vision:** O comando `!print` agora analisa os prints das partidas automaticamente com Inteligência Artificial!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -327,6 +335,90 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
+# --- COMANDO !PRINT COM GEMINI VISION ---
+@bot.command(name="print")
+async def cmd_print(ctx):
+    if ctx.channel.id != CANAL_PRINTS_ID:
+        await ctx.send("⚠️ Este comando deve ser usado apenas no canal de envios de prints!", delete_after=10)
+        return
+
+    anexo = None
+    if ctx.message.attachments:
+        for att in ctx.message.attachments:
+            if att.content_type and "image" in att.content_type:
+                anexo = att
+                break
+    elif ctx.message.reference:
+        try:
+            msg_ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if msg_ref.attachments:
+                for att in msg_ref.attachments:
+                    if att.content_type and "image" in att.content_type:
+                        anexo = att
+                        break
+        except Exception:
+            pass
+
+    if not anexo:
+        await ctx.send("⚠️ **Faltou a imagem, Lobinho!** Envie o print junto com o comando `!print` ou marque a mensagem da foto respondendo com o comando.", delete_after=12)
+        return
+
+    processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida...")
+
+    try:
+        image_io = io.BytesIO()
+        await anexo.save(image_io)
+        image_io.seek(0)
+
+        pil_image = PILImage.open(image_io)
+
+        prompt = (
+            "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
+            "Extraia os dados principais da partida de forma organizada: "
+            "nome dos jogadores, notas médias, gols, assistências e destaques por setor. "
+            "Seja direto e formate de maneira limpa para exibição em um relatório de Discord."
+        )
+
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[pil_image, prompt]
+        )
+
+        relatorio_ia = response.text if response and response.text else "Não foi possível extrair os dados da imagem."
+
+        canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
+
+        embed = discord.Embed(
+            title="📊 Relatório Inteligente — RoiPau FC",
+            description="Estatísticas extraídas via Gemini Vision:",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name="⭐ Análise da Partida", 
+            value=f"{relatorio_ia[:1000]}", 
+            inline=False
+        )
+        
+        embed.set_image(url=anexo.url)
+        embed.set_footer(text=f"Enviado por {ctx.author.display_name} • Gerenciado pelo Bot do RoiPau")
+
+        if canal_estatisticas:
+            await canal_estatisticas.send(embed=embed)
+        else:
+            await ctx.send(embed=embed)
+
+        await processing_msg.edit(content="✅ **Análise concluída e publicada com sucesso no canal de estatísticas!**")
+        
+        await asyncio.sleep(8)
+        try:
+            await processing_msg.delete()
+        except Exception:
+            pass
+
+    except Exception as e:
+        await processing_msg.edit(content=f"❌ Erro ao processar o print com a Gemini: `{e}`")
+
 @bot.command(name="comandos")
 async def comandos(ctx):
     try:
@@ -358,7 +450,8 @@ async def comandos(ctx):
         value=(
             "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
             "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
-            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
+            "`!remover @Jogador`\n> Remove um participante específico da lista ativa.\n"
+            "`!print` (com imagem)\n> Envia o print para análise automática via Inteligência Artificial."
         ),
         inline=False
     )
@@ -514,7 +607,7 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!print`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
@@ -946,22 +1039,3 @@ async def fechar_lista(ctx):
             await asyncio.sleep(86400)
             try:
                 if msg_esc:
-                    await msg_esc.delete()
-            except Exception as e:
-                print(f"Erro ao apagar mensagem de escalação automática: {e}")
-            try:
-                if msg_rel:
-                    await msg_rel.delete()
-            except Exception as e:
-                print(f"Erro ao apagar relatório automático: {e}")
-
-        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada nas variáveis de ambiente do Render!")
-else:
-    bot.run(TOKEN)
