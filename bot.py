@@ -71,7 +71,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.46"
+VERSAO_ATUAL = "v3.47"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +91,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Comando !teste Inteligente:** Agora calcula o ping exato com os servidores do Discord e testa a integridade dos comandos!"
+                        "• **Correção Definitiva de Rota:** Ajustado o mapeamento de modelos no botão de reanálise para evitar erros 404 e garantir processamento liso!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -341,7 +341,7 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- VIEW COM BOTÃO DE RETRY ---
+# --- VIEW COM BOTÃO DE RETRY BLINDADO ---
 class RetryPrintView(discord.ui.View):
     def __init__(self, ctx, anexo_url):
         super().__init__(timeout=180)
@@ -372,35 +372,32 @@ async def processar_print_ia(ctx, image_url, status_msg):
             "nome, nota, gols, assistencias para que possamos atualizar o banco de dados do clã."
         )
 
-        modelos_para_tentar = ['gemini-3.8-flash', 'gemini-1.5-flash']
+        # Utilizando apenas o modelo oficial ativo `gemini-3.8-flash`
         sucesso = False
         response = None
         ultimo_erro = ""
 
-        for modelo in modelos_para_tentar:
-            if sucesso:
-                break
-            for tentativa in range(1, 4):
-                try:
-                    response = gemini_client.models.generate_content(
-                        model=modelo,
-                        contents=[prompt, pil_image]
-                    )
-                    if response and response.text:
-                        sucesso = True
-                        break
-                except Exception as e:
-                    ultimo_erro = str(e)
-                    if "429" in ultimo_erro or "503" in ultimo_erro or "exhausted" in ultimo_erro.lower() or "unavailable" in ultimo_erro.lower():
-                        await asyncio.sleep(3 * tentativa)
-                        continue
-                    else:
-                        break
+        for tentativa in range(1, 4):
+            try:
+                response = gemini_client.models.generate_content(
+                    model='gemini-3.8-flash',
+                    contents=[prompt, pil_image]
+                )
+                if response and response.text:
+                    sucesso = True
+                    break
+            except Exception as e:
+                ultimo_erro = str(e)
+                if "429" in ultimo_erro or "503" in ultimo_erro or "exhausted" in ultimo_erro.lower() or "unavailable" in ultimo_erro.lower():
+                    await asyncio.sleep(3 * tentativa)
+                    continue
+                else:
+                    break
 
         if not sucesso:
             view_retry = RetryPrintView(ctx, image_url)
             await status_msg.edit(
-                content=f"❌ O Google está com muita demanda no momento (Limite de cota excedido). Clique no botão abaixo para tentar de novo! (Erro: `{ultimo_erro}`)",
+                content=f"❌ O Google está com muita demanda no momento. Clique no botão abaixo para tentar de novo! (Erro: `{ultimo_erro}`)",
                 view=view_retry
             )
             return
