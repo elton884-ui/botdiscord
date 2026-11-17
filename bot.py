@@ -21,7 +21,6 @@ def run_web_server():
     print(f"🌐 Servidor web rodando na porta {port}")
     server.serve_forever()
 
-# Inicia o servidor web em uma thread dedicada não-daemon para segurar o Render
 Thread(target=run_web_server, daemon=False).start()
 
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
@@ -33,31 +32,45 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON ---
 ARQUIVO_DADOS = "listas_ativas.json"
+ARQUIVO_ESTATS = "estatisticas_cla.json"
 
-def carregar_listas():
-    if os.path.exists(ARQUIVO_DADOS):
+def carregar_json(arquivo, padrao):
+    if os.path.exists(arquivo):
         try:
-            with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+            with open(arquivo, "r", encoding="utf-8") as f:
                 dados_brutos = json.load(f)
-                return {int(k): v for k, v in dados_brutos.items()}
+                return {int(k) if arquivo == ARQUIVO_DADOS and str(k).isdigit() else k: v for k, v in dados_brutos.items()}
         except Exception as e:
-            print(f"⚠️ Erro ao carregar listas salvas: {e}")
-    return {}
+            print(f"⚠️ Erro ao carregar {arquivo}: {e}")
+    return padrao
+
+def salvar_json(arquivo, dados):
+    try:
+        with open(arquivo, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar {arquivo}: {e}")
+
+listas_ativas = carregar_json(ARQUIVO_DADOS, {})
+# Garante chaves inteiras para o dicionário de listas ativas
+listas_ativas = {int(k): v for k, v in listas_ativas.items()}
+
+estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
 
 def salvar_listas():
-    try:
-        with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
-            dados_str_keys = {str(k): v for k, v in listas_ativas.items()}
-            json.dump(dados_str_keys, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"⚠️ Erro ao salvar listas: {e}")
+    salvar_json(ARQUIVO_DADOS, {str(k): v for k, v in listas_ativas.items()})
 
-listas_ativas = carregar_listas()
+def salvar_estats():
+    salvar_json(ARQUIVO_ESTATS, estatisticas_cla)
 
+# --- IDs DOS CANAIS OFICIAIS ---
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
+CANAL_DADOS_FECHADO_ID = 1572265046002638878
+CANAL_RESULTADOS_ID = 1572265122066604212
+CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.16"
+VERSAO_ATUAL = "v3.75-Completa"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -77,7 +90,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Estabilidade no Render:** Servidor web ajustado para manter a instância ativa sem quedas precoces."
+                        "• **Módulo de Estatísticas Integrado:** Leitura automática no canal fechado com envio de resultados e ranking semanal por posições!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -103,6 +116,115 @@ async def on_raw_reaction_add(payload):
                     await message.delete()
             except Exception as e:
                 print(f"Erro ao tentar apagar mensagem via reação: {e}")
+
+# --- LISTENER AUTOMÁTICO DO CANAL FECHADO DE DADOS ---
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    # Se a mensagem foi enviada no canal fechado de dados (dados-estatisticas)
+    if message.channel.id == CANAL_DADOS_FECHADO_ID:
+        conteudo = message.content.strip()
+        
+        # Formato esperado por linha: Nome | Posição | Gols | Assistências | Nota
+        # Exemplo: LuLa | ATE | 2 | 2 | 10.0
+        linhas = conteudo.split("\n")
+        jogadores_processados = []
+
+        for linha in linhas:
+            if not linha.strip():
+                continue
+            partes = [p.strip() for p in linha.split("|")]
+            if len(partes) >= 5:
+                nome = partes[0]
+                posicao = partes[1].upper()
+                gols = int(partes[2])
+                assistencias = int(partes[3])
+                nota = float(partes[4].replace(",", "."))
+
+                jogadores = estatisticas_cla.setdefault("jogadores", {})
+                if nome not in jogadores:
+                    jogadores[nome] = {"posicao": posicao, "partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0, "nota_mais_alta": 0.0}
+                
+                j = jogadores[nome]
+                j["posicao"] = posicao
+                j["partidas"] += 1
+                j["gols"] += gols
+                j["assistencias"] += assistencias
+                j["soma_notas"] += nota
+                if nota > j["nota_mais_alta"]:
+                    j["nota_mais_alta"] = nota
+
+                jogadores_processados.append((nome, posicao, gols, assistencias, nota))
+
+        if jogadores_processados:
+            estatisticas_cla["partidas_totais"] += 1
+            salvar_estats()
+
+            # 1. Posta o resultado da partida no canal de resultados
+            canal_res = bot.get_channel(CANAL_RESULTADOS_ID)
+            if canal_res:
+                embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
+                resumo_txt = []
+                for jp in jogadores_processados:
+                    resumo_txt.append(f"• **{jp[0]}** (`{jp[1]}`) — ⭐ {jp[4]} | ⚽ {jp[2]} | 🎯 {jp[3]}")
+                embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
+                await canal_res.send(embed=embed_res)
+
+            # 2. Atualiza e posta o Ranking Semanal no canal de melhores da semana
+            canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
+            if canal_ranking:
+                jogadores = estatisticas_cla.get("jogadores", {})
+                ranking_ordenado = sorted(
+                    jogadores.items(),
+                    key=lambda x: (x[1]["soma_notas"] / x[1]["partidas"] if x[1]["partidas"] > 0 else 0),
+                    reverse=True
+                )
+
+                embed_rank = discord.Embed(
+                    title="🏆 RANKING E MELHORES DA SEMANA — ROIPIAU FC",
+                    description=f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\u200b",
+                    color=discord.Color.gold()
+                )
+
+                # Separa por categorias de posição
+                posicoes_dict = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
+                for nome, info in ranking_ordenado:
+                    media = info["soma_notas"] / info["partidas"] if info["partidas"] > 0 else 0
+                    pos = info.get("posicao", "MEI")
+                    linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {info['gols']} | 🎯 {info['assistencias']} ({info['partidas']}j)"
+                    
+                    if pos in ["ATD", "ATE", "ATA"]:
+                        posicoes_dict["ATAQUE"].append(linha_txt)
+                    elif pos in ["GL", "GOL"]:
+                        posicoes_dict["GOLEIRO"].append(linha_txt)
+                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
+                        posicoes_dict["DEFESA"].append(linha_txt)
+                    else:
+                        posicoes_dict["MEIO"].append(linha_txt)
+
+                for cat, lista_jog in posicoes_dict.items():
+                    if lista_jog:
+                        embed_rank.add_field(name=f"🛡️ Categoria: {cat}", value="\n".join(lista_jog), inline=False)
+
+                embed_rank.set_footer(text="RoiPau FC Bot • Atualização automática semanal ⚽🔥")
+                
+                # Apaga mensagens anteriores do bot no canal de ranking para manter limpo
+                async for msg in canal_ranking.history(limit=5):
+                    if msg.author.id == bot.user.id:
+                        try:
+                            await msg.delete()
+                        except Exception:
+                            pass
+                
+                await canal_ranking.send(embed=embed_rank)
+
+            await message.add_reaction("✅")
+            return
+
+    # Garante que os comandos normais continuem funcionando sem interferência
+    await bot.process_commands(message)
 
 FORMAGOES = {
     "352":  {"GOL": 1, "ZAG": 3, "VOL": 2, "ALA": 2, "MEI": 1, "ATA": 2},
@@ -514,6 +636,7 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
+        f"📊 **Partidas Registradas no Banco:** `{estatisticas_cla['partidas_totais']}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
     )
     
