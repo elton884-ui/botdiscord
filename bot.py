@@ -69,7 +69,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.80-SelecaoErelatorio"
+VERSAO_ATUAL = "v3.81-ComandosAtualizado"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -90,7 +90,7 @@ async def on_ready():
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
                         "• **Seleção da Semana:** Quadro especial com os melhores de cada posição integrado ao ranking!\n"
-                        "• **Relatório Final & Reset:** Adicionado comando `!relatoriodasemana` para premiar os craques e zerar o ciclo semanal automaticamente."
+                        "• **Relatório Final & Reset:** Comando `!relatoriodasemana` adicionado e visível no painel `!comandos`!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -559,9 +559,17 @@ async def comandos(ctx):
     )
 
     embed.add_field(
+        name="📊 Estatísticas & Relatório Semanal",
+        value=(
+            "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
         name="⚙️ Comandos Avançados & Simulação",
         value=(
-            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
+            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o teto máximo por posição.\n"
             "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
             "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
         ),
@@ -720,7 +728,7 @@ async def teste(ctx):
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"📊 **Partidas Registradas no Banco:** `{estatisticas_cla['partidas_totais']}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
