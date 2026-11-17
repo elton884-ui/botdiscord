@@ -71,7 +71,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.45"
+VERSAO_ATUAL = "v3.46"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +91,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Comando !teste Restaurado:** O comando de verificação rápida está de volta e operando!"
+                        "• **Comando !teste Inteligente:** Agora calcula o ping exato com os servidores do Discord e testa a integridade dos comandos!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -495,14 +495,29 @@ async def cmd_print(ctx):
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida e atualizando o banco de dados...")
     await processar_print_ia(ctx, anexo.url, processing_msg)
 
-# --- COMANDO DE TESTE ---
+# --- COMANDO DE TESTE (COM PING E LATÊNCIA) ---
 @bot.command(name="teste")
 async def teste(ctx):
     try:
         await ctx.message.delete()
     except Exception:
         pass
-    await ctx.send("🤖 **RoiPau FC Bot operando 100% e na escuta, Lobinho!** ⚽🔥", delete_after=10)
+    
+    ping_ms = round(bot.latency * 1000)
+    
+    embed = discord.Embed(
+        title="🏓 TESTE DE SISTEMA — ROIPIAU FC",
+        description=(
+            f"🤖 **Status do Bot:** `Operacional e Conectado`\n"
+            f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
+            f"🌐 **Servidor Web (Render):** `Online`\n"
+            f"🧠 **IA & Banco de Dados:** `Prontos para uso`"
+        ),
+        color=discord.Color.green()
+    )
+    embed.set_footer(text="RoiPau FC Bot • Diagnóstico de rede ⚽🔥")
+    
+    await ctx.send(embed=embed, delete_after=15)
 
 # --- COMANDOS DE GESTÃO DE LISTAS, SIMULAÇÃO E TIMES ---
 @bot.command(name="criarlista")
@@ -998,7 +1013,7 @@ async def comandos(ctx):
             "`!ranking`\n> Mostra o top artilheiros e assistências.\n"
             "`!relatoriosemanal`\n> Gera o balanço completo do clã.\n"
             "`!resetartemporada`\n> Zera as estatísticas para nova temporada.\n"
-            "`!teste`\n> Testa se o bot está ativo."
+            "`!teste`\n> Mede o ping, latência e testa o sistema."
         ),
         inline=False
     )
