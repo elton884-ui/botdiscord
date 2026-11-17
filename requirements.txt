@@ -1,4 +1,6 @@
 discord.py
-google-genai
-Pillow
+pillow
 aiohttp
+easyocr
+torch
+torchvision
