@@ -528,7 +528,7 @@ async def teste(ctx):
     
     await ctx.send(feedback_msg, delete_after=15)
 
-# --- COMANDO !PRINT COM TESSERACT OCR ---
+# --- COMANDO !PRINT COM TESSERACT OCR (AJUSTADO) ---
 @bot.command(name="print")
 async def cmd_print(ctx):
     try:
@@ -564,16 +564,13 @@ async def cmd_print(ctx):
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** O Tesseract OCR está lendo o texto e as estatísticas...")
 
     try:
-        # Baixa a imagem do Discord de forma assíncrona
-        async with aiohttp.ClientSession() as session:
-            async with session.get(anexo.url) as resp:
-                if resp.status != 200:
-                    await processing_msg.edit(content="❌ Erro ao baixar a imagem do Discord.")
-                    return
-                image_bytes = await resp.read()
+        # Salva o anexo diretamente usando os recursos nativos do discord.py (sem erro de link)
+        image_io = io.BytesIO()
+        await anexo.save(image_io)
+        image_io.seek(0)
 
         # Abre a imagem com a biblioteca Pillow
-        image = Image.open(io.BytesIO(image_bytes))
+        image = Image.open(image_io)
 
         # Executa o Tesseract OCR buscando português e inglês
         texto_extraido = pytesseract.image_to_string(image, lang='por+eng')
