@@ -3,13 +3,10 @@ import re
 import random
 import json
 import asyncio
-import io
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
-from google import genai
-from PIL import Image as PILImage
 
 # --- SERVIDOR WEB PARA O RENDER (MANTÉM O APP VIVO) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -34,44 +31,33 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- INICIALIZAÇÃO DA GEMINI API ---
-gemini_client = genai.Client()
-
-# --- PERSISTÊNCIA DE DADOS E ESTATÍSTICAS ---
+# --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON ---
 ARQUIVO_DADOS = "listas_ativas.json"
-ARQUIVO_ESTATS = "estatisticas_cla.json"
 
-def carregar_json(arquivo, padrao):
-    if os.path.exists(arquivo):
+def carregar_listas():
+    if os.path.exists(ARQUIVO_DADOS):
         try:
-            with open(arquivo, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+                dados_brutos = json.load(f)
+                return {int(k): v for k, v in dados_brutos.items()}
         except Exception as e:
-            print(f"⚠️ Erro ao carregar {arquivo}: {e}")
-    return padrao
-
-def salvar_json(arquivo, dados):
-    try:
-        with open(arquivo, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"⚠️ Erro ao salvar {arquivo}: {e}")
-
-listas_ativas = {int(k): v for k, v in carregar_json(ARQUIVO_DADOS, {}).items()}
-estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
+            print(f"⚠️ Erro ao carregar listas salvas: {e}")
+    return {}
 
 def salvar_listas():
-    salvar_json(ARQUIVO_DADOS, {str(k): v for k, v in listas_ativas.items()})
+    try:
+        with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
+            dados_str_keys = {str(k): v for k, v in listas_ativas.items()}
+            json.dump(dados_str_keys, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar listas: {e}")
 
-def salvar_estats():
-    salvar_json(ARQUIVO_ESTATS, estatisticas_cla)
+listas_ativas = carregar_listas()
 
 CANAL_AVISO_ID = 1570420721312866436
 CANAL_ESCALACAO_ID = 1570429628588499086
-CANAL_PRINTS_ID = 1572265046002638878
-CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.47"
+VERSAO_ATUAL = "v3.16"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +77,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção Definitiva de Rota:** Ajustado o mapeamento de modelos no botão de reanálise para evitar erros 404 e garantir processamento liso!"
+                        "• **Estabilidade no Render:** Servidor web ajustado para manter a instância ativa sem quedas precoces."
                     )
                     await channel.send(changelog_msg)
                     
@@ -341,218 +327,53 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- VIEW COM BOTÃO DE RETRY BLINDADO ---
-class RetryPrintView(discord.ui.View):
-    def __init__(self, ctx, anexo_url):
-        super().__init__(timeout=180)
-        self.ctx = ctx
-        self.anexo_url = anexo_url
-
-    @discord.ui.button(label="🔄 Tentar Análise Novamente", style=discord.ButtonStyle.primary)
-    async def retry_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔄 Reiniciando a análise do print, aguarde...", ephemeral=True)
-        await processar_print_ia(self.ctx, self.anexo_url, interaction.message)
-
-async def processar_print_ia(ctx, image_url, status_msg):
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    await status_msg.edit(content="❌ Erro ao baixar a imagem do print para reanálise.")
-                    return
-                image_bytes = await resp.read()
-
-        pil_image = PILImage.open(io.BytesIO(image_bytes))
-
-        prompt = (
-            "Analise este print de estatísticas de uma partida de EA Sports FC Pro Clubs. "
-            "1. Identifique o Craque do Jogo (MVP) e o Segundo Melhor em Campo (com nome e nota). "
-            "2. Retorne também em formato JSON puro (dentro de um bloco de código json) uma lista com todos os jogadores visíveis contendo: "
-            "nome, nota, gols, assistencias para que possamos atualizar o banco de dados do clã."
-        )
-
-        # Utilizando apenas o modelo oficial ativo `gemini-3.8-flash`
-        sucesso = False
-        response = None
-        ultimo_erro = ""
-
-        for tentativa in range(1, 4):
-            try:
-                response = gemini_client.models.generate_content(
-                    model='gemini-3.8-flash',
-                    contents=[prompt, pil_image]
-                )
-                if response and response.text:
-                    sucesso = True
-                    break
-            except Exception as e:
-                ultimo_erro = str(e)
-                if "429" in ultimo_erro or "503" in ultimo_erro or "exhausted" in ultimo_erro.lower() or "unavailable" in ultimo_erro.lower():
-                    await asyncio.sleep(3 * tentativa)
-                    continue
-                else:
-                    break
-
-        if not sucesso:
-            view_retry = RetryPrintView(ctx, image_url)
-            await status_msg.edit(
-                content=f"❌ O Google está com muita demanda no momento. Clique no botão abaixo para tentar de novo! (Erro: `{ultimo_erro}`)",
-                view=view_retry
-            )
-            return
-
-        texto_resposta = response.text if response and response.text else "Não foi possível extrair os dados da imagem."
-
-        try:
-            match_json = re.search(r'```json\s*([\s\S]*?)\s*```', texto_resposta)
-            if match_json:
-                dados_partida = json.loads(match_json.group(1))
-                estatisticas_cla["partidas_totais"] += 1
-                
-                for p in dados_partida:
-                    nome = p.get("nome", "Desconhecido").strip()
-                    nota = float(p.get("nota", 0.0))
-                    gols = int(p.get("gols", 0))
-                    asts = int(p.get("assistencias", 0))
-                    
-                    if nome not in estatisticas_cla["jogadores"]:
-                        estatisticas_cla["jogadores"][nome] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0, "mvps": 0}
-                    
-                    j = estatisticas_cla["jogadores"][nome]
-                    j["partidas"] += 1
-                    j["gols"] += gols
-                    j["assistencias"] += asts
-                    j["soma_notas"] += nota
-                
-                salvar_estats()
-        except Exception as e:
-            print(f"⚠️ Erro ao processar banco de dados estatístico: {e}")
-
-        canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
-
-        embed = discord.Embed(
-            title="📊 Destaques da Partida — RoiPau FC",
-            description="Estatísticas processadas e banco de dados atualizado com sucesso:",
-            color=discord.Color.green()
-        )
-        
-        embed.add_field(
-            name="⭐ Craque e 2º Melhor", 
-            value=f"{texto_resposta[:1000]}", 
-            inline=False
-        )
-        
-        embed.set_image(url=image_url)
-        embed.set_footer(text=f"Enviado por {ctx.author.display_name} • Banco de Dados RoiPau FC")
-
-        if canal_estatisticas:
-            await canal_estatisticas.send(embed=embed)
-        else:
-            await ctx.send(embed=embed)
-
-        await status_msg.edit(content="✅ **Análise concluída, banco de dados atualizado e relatório publicado!**", view=None)
-        
-        await asyncio.sleep(8)
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-
-    except Exception as e:
-        await status_msg.edit(content=f"❌ Erro crítico ao processar o print: `{e}`")
-
-@bot.command(name="print")
-async def cmd_print(ctx):
-    if ctx.channel.id != CANAL_PRINTS_ID:
-        await ctx.send("⚠️ Este comando deve ser usado apenas no canal de envios de prints!", delete_after=10)
-        return
-
-    anexo = None
-    if ctx.message.attachments:
-        for att in ctx.message.attachments:
-            if att.content_type and "image" in att.content_type:
-                anexo = att
-                break
-    elif ctx.message.reference:
-        try:
-            msg_ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if msg_ref.attachments:
-                for att in msg_ref.attachments:
-                    if att.content_type and "image" in att.content_type:
-                        anexo = att
-                        break
-        except Exception:
-            pass
-
-    if not anexo:
-        await ctx.send("⚠️ **Faltou a imagem, Lobinho!** Envie o print junto com o comando `!print` ou marque a mensagem da foto respondendo com o comando.", delete_after=12)
-        return
-
-    processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida e atualizando o banco de dados...")
-    await processar_print_ia(ctx, anexo.url, processing_msg)
-
-# --- COMANDO DE TESTE (COM PING E LATÊNCIA) ---
-@bot.command(name="teste")
-async def teste(ctx):
+@bot.command(name="comandos")
+async def comandos(ctx):
     try:
         await ctx.message.delete()
     except Exception:
         pass
-    
-    ping_ms = round(bot.latency * 1000)
-    
+
     embed = discord.Embed(
-        title="🏓 TESTE DE SISTEMA — ROIPIAU FC",
-        description=(
-            f"🤖 **Status do Bot:** `Operacional e Conectado`\n"
-            f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
-            f"🌐 **Servidor Web (Render):** `Online`\n"
-            f"🧠 **IA & Banco de Dados:** `Prontos para uso`"
-        ),
-        color=discord.Color.green()
+        title="⚽ PAINEL DE COMANDOS — ROIPIAU FC",
+        description="Lista completa de comandos e funcionalidades oficiais para gerenciar os treinos e campeonatos:\n\u200b",
+        color=discord.Color.blue()
     )
-    embed.set_footer(text="RoiPau FC Bot • Diagnóstico de rede ⚽🔥")
-    
-    await ctx.send(embed=embed, delete_after=15)
 
-# --- COMANDOS DE GESTÃO DE LISTAS, SIMULAÇÃO E TIMES ---
-@bot.command(name="criarlista")
-async def criar_lista(ctx, *, args):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
+    embed.add_field(
+        name="📋 Gestão de Listas",
+        value=(
+            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial com 2 times ativos e restantes na reserva.\n"
+            "`!listasativas` ou `!ativas`\n> Envia no canal de avisos o resumo de todas as convocações abertas.\n"
+            "`!reabrir` ou `!restaurar`\n> Reabre e restaura a última lista do canal.\n"
+            "`!limparmortas`\n> Remove do sistema listas cujas mensagens já foram apagadas no Discord.\n"
+            "`!limpar`\n> Limpa e reseta todos os inscritos e reservas da lista ativa.\n"
+            "`!fecharlista`\n> Encerra as inscrições, processa capitães, sorteia os times e programa limpeza de 24h."
+        ),
+        inline=False
+    )
 
-    try:
-        params = [p.strip() for p in args.split(";")]
-        esquema, categoria, titulo, _, _, _ = params
+    embed.add_field(
+        name="⚙️ Comandos Avançados & Simulação",
+        value=(
+            "`!simular <quantidade>`\n> Cria jogadores virtuais respeitando estritamente o limite máximo por posição.\n"
+            "`!addtime 3` ou `!addtime 4`\n> Abre o 3º ou 4º time, atualizando os botões de capitães e promovendo os reservas.\n"
+            "`!remover @Jogador`\n> Remove um participante específico da lista ativa."
+        ),
+        inline=False
+    )
 
-        titulares = []
-        reservas = []
-        capitaes = {0: None, 1: None, 2: None, 3: None}
-        qtd_times_ativos = 2
+    embed.add_field(
+        name="🛠️ Sistema & Diagnóstico",
+        value=(
+            "`!teste`\n> Verifica a latência (ping) e o status operacional do bot.\n"
+            "💡 **Dica de Relatório:** Reaja com `✅` em qualquer mensagem do bot no canal de avisos para apagá-la instantaneamente!"
+        ),
+        inline=False
+    )
 
-        view = ListaButtonsDinamica(esquema, qtd_times=qtd_times_ativos)
-        embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos)
-        
-        msg = await ctx.send(content="@everyone", embed=embed, view=view)
-
-        listas_ativas[msg.id] = {
-            "titulo": titulo,
-            "esquema": esquema,
-            "categoria": categoria,
-            "titulares": titulares,
-            "reservas": reservas,
-            "capitaes": capitaes,
-            "channel_id": ctx.channel.id,
-            "fechada": False,
-            "view": view,
-            "qtd_times_ativos": qtd_times_ativos
-        }
-        salvar_listas()
-    except Exception:
-        await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
+    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
+    await ctx.send(embed=embed)
 
 @bot.command(name="listasativas", aliases=["ativas"])
 async def listas_ativas_cmd(ctx):
@@ -592,6 +413,191 @@ async def listas_ativas_cmd(ctx):
         await canal_aviso.send(embed=embed)
     else:
         await ctx.send(embed=embed)
+
+@bot.command(name="reabrir", aliases=["restaurar"])
+async def reabrir_lista(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg_id_alvo = None
+    dados_alvo = None
+    for mid, dados in reversed(list(listas_ativas.items())):
+        if dados["channel_id"] == ctx.channel.id:
+            msg_id_alvo = mid
+            dados_alvo = dados
+            break
+
+    if not msg_id_alvo or not dados_alvo:
+        await ctx.send("⚠️ Nenhuma lista encontrada neste canal para restaurar!", delete_after=10)
+        return
+
+    dados_alvo["fechada"] = False
+    nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
+    dados_alvo["view"] = nova_view
+
+    channel = bot.get_channel(dados_alvo["channel_id"])
+    
+    try:
+        msg = await channel.fetch_message(msg_id_alvo)
+        novo_embed = gerar_embed_dinamico(
+            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
+            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=nova_view)
+        await ctx.send(f"🔄 **Lista reaberta e restaurada com sucesso!**", delete_after=12)
+    except (discord.NotFound, discord.HTTPException):
+        novo_embed = gerar_embed_dinamico(
+            dados_alvo["titulo"], dados_alvo["esquema"], dados_alvo["categoria"], 
+            dados_alvo["titulares"], dados_alvo["reservas"], dados_alvo["capitaes"], dados_alvo["qtd_times_ativos"]
+        )
+        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
+        
+        del listas_ativas[msg_id_alvo]
+        listas_ativas[nova_msg.id] = dados_alvo
+        salvar_listas()
+        
+        await ctx.send(f"🔄 **A mensagem anterior tinha sido apagada!** Recriei a lista atualizada com sucesso.", delete_after=12)
+    
+    salvar_listas()
+
+@bot.command(name="limparmortas")
+async def limpar_mortas(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    removidas = 0
+    ids_para_remover = []
+
+    for mid, dados in list(listas_ativas.items()):
+        canal_id = dados.get("channel_id")
+        canal = bot.get_channel(canal_id)
+        
+        if not canal:
+            ids_para_remover.append(mid)
+            removidas += 1
+            continue
+            
+        try:
+            await canal.fetch_message(mid)
+        except discord.NotFound:
+            ids_para_remover.append(mid)
+            removidas += 1
+        except discord.Forbidden:
+            pass
+        except Exception:
+            pass
+
+    for mid in ids_para_remover:
+        del listas_ativas[mid]
+
+    if removidas > 0:
+        salvar_listas()
+        await ctx.send(f"🧹 **Limpeza concluída!** `{removidas}` listas órfãs/apagadas foram removidas do sistema.", delete_after=12)
+    else:
+        await ctx.send("✨ **Tudo limpo!** Nenhuma lista órfã encontrada no sistema.", delete_after=10)
+
+@bot.command(name="teste")
+async def teste(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    ping_ms = round(bot.latency * 1000)
+    
+    feedback_msg = (
+        "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
+        f"🟢 **Status da Conexão:** Online e Operacional\n"
+        f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
+        f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!teste` — **Tudo OK!**"
+    )
+    
+    await ctx.send(feedback_msg, delete_after=15)
+
+@bot.command(name="criarlista")
+async def criar_lista(ctx, *, args):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    try:
+        params = [p.strip() for p in args.split(";")]
+        esquema, categoria, titulo, _, _, _ = params
+
+        titulares = []
+        reservas = []
+        capitaes = {0: None, 1: None, 2: None, 3: None}
+        qtd_times_ativos = 2  # Começa sempre com 2 times ativos
+
+        view = ListaButtonsDinamica(esquema, qtd_times=qtd_times_ativos)
+        embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos)
+        
+        msg = await ctx.send(content="@everyone", embed=embed, view=view)
+
+        listas_ativas[msg.id] = {
+            "titulo": titulo,
+            "esquema": esquema,
+            "categoria": categoria,
+            "titulares": titulares,
+            "reservas": reservas,
+            "capitaes": capitaes,
+            "channel_id": ctx.channel.id,
+            "fechada": False,
+            "view": view,
+            "qtd_times_ativos": qtd_times_ativos
+        }
+        salvar_listas()
+    except Exception:
+        await ctx.send("⚠️ **Formato inválido!** Use: `!criarlista 352;mei;LIGA CLUBS das 17h;2;0;1`")
+
+@bot.command(name="limpar")
+async def limpar(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg_id = None
+    if ctx.message.reference:
+        msg_id = ctx.message.reference.message_id
+    else:
+        for mid, dados in reversed(list(listas_ativas.items())):
+            if dados["channel_id"] == ctx.channel.id and not dados["fechada"]:
+                msg_id = mid
+                break
+
+    if not msg_id or msg_id not in listas_ativas:
+        await ctx.send("⚠️ Nenhuma lista ativa encontrada para limpar!", delete_after=10)
+        return
+
+    dados = listas_ativas[msg_id]
+    dados["titulares"] = []
+    dados["reservas"] = []
+    dados["qtd_times_ativos"] = 2
+    dados["capitaes"] = {i: None for i in range(4)}
+    salvar_listas()
+
+    nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=2)
+    dados["view"] = nova_view
+
+    channel = bot.get_channel(dados["channel_id"])
+    try:
+        msg = await channel.fetch_message(msg_id)
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        await msg.edit(embed=novo_embed, view=nova_view)
+    except Exception:
+        pass
+    
+    await ctx.send("🧹 **Lista limpa com sucesso!** Todos os inscritos, reservas e capitães foram resetados.", delete_after=10)
 
 @bot.command(name="simular")
 async def simular(ctx, quantidade: int):
@@ -660,7 +666,7 @@ async def simular(ctx, quantidade: int):
     except Exception:
         pass
 
-    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{len(titulares) + len(reservas)}` jogadores.", delete_after=10)
+    await ctx.send(f"🧪 **Simulação concluída!** Inseridos `{len(titulares) + len(reservas)}` jogadores respeitando estritamente o teto máximo por posição.", delete_after=10)
 
 @bot.command(name="addtime")
 async def addtime(ctx, numero_time: int):
@@ -693,6 +699,7 @@ async def addtime(ctx, numero_time: int):
         return
 
     dados["qtd_times_ativos"] = numero_time
+
     esquema = dados["esquema"]
     config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     
@@ -709,6 +716,7 @@ async def addtime(ctx, numero_time: int):
             novos_reservas.append(res)
             
     dados["reservas"] = novos_reservas
+
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
     dados["view"] = nova_view
     salvar_listas()
@@ -722,9 +730,16 @@ async def addtime(ctx, numero_time: int):
         )
         await msg.edit(embed=novo_embed, view=nova_view)
     except Exception:
-        pass
+        novo_embed = gerar_embed_dinamico(
+            dados["titulo"], dados["esquema"], dados["categoria"], 
+            dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
+        )
+        nova_msg = await channel.send(content="@everyone", embed=novo_embed, view=nova_view)
+        del listas_ativas[msg_id]
+        listas_ativas[nova_msg.id] = dados
+        salvar_listas()
 
-    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!**", delete_after=12)
+    await ctx.send(f"🛡️ **TIME {numero_time} ABERTO!** Botões de capitães atualizados e reservas promovidos respeitando a ordem e posição exata.", delete_after=12)
 
 @bot.command(name="remover")
 async def remover(ctx, member: discord.Member = None):
@@ -837,10 +852,14 @@ async def fechar_lista(ctx):
                 if len(times_montados[i][pos]) < config_formacao[pos]:
                     times_montados[i][pos].append(encontrado['user'])
                 else:
+                    alocado_alt = False
                     for p in config_formacao.keys():
                         if len(times_montados[i][p]) < config_formacao[p]:
                             times_montados[i][p].append(encontrado['user'])
+                            alocado_alt = True
                             break
+                    if not alocado_alt:
+                        todos_candidatos.append(encontrado)
 
     random.shuffle(todos_candidatos)
     novos_reservas = []
@@ -854,10 +873,29 @@ async def fechar_lista(ctx):
             t_escolhido = times_com_vaga_pos[0]
             times_montados[t_escolhido][pos].append(item['user'])
         else:
-            novos_reservas.append(item)
+            vagas_livres = []
+            for i in range(qtd_times):
+                for p in config_formacao.keys():
+                    if len(times_montados[i][p]) < config_formacao[p]:
+                        vagas_livres.append((i, p))
+            
+            if vagas_livres:
+                vagas_livres.sort(key=lambda item_vaga: sum(len(lst) for lst in times_montados[item_vaga[0]].values()))
+                t_escolhido, p_escolhida = vagas_livres[0]
+                times_montados[t_escolhido][p_escolhida].append(item['user'])
+            else:
+                novos_reservas.append(item)
 
     dados["reservas"] = novos_reservas
     salvar_listas()
+
+    for i in range(qtd_times):
+        if i not in capitaes_atribuidos or not capitaes_atribuidos[i] or "*A definir" in str(capitaes_atribuidos[i]):
+            candidatos = [j for v in times_montados[i].values() for j in v]
+            if candidatos:
+                capitaes_atribuidos[i] = random.choice(candidatos)
+            else:
+                capitaes_atribuidos[i] = "*Nenhum*"
 
     channel = bot.get_channel(dados["channel_id"])
     try:
@@ -890,133 +928,37 @@ async def fechar_lista(ctx):
             res_str = ", ".join([f"{item['user']} ({item['pos']})" for item in dados["reservas"]])
             mensagem_escalacao += f"⏳ **Suplentes / Reservas:** {res_str}\n"
 
-        await ctx.send(mensagem_escalacao)
+        msg_escalacao_enviada = await ctx.send(mensagem_escalacao)
+
+        relatorio_msg_enviada = None
+        canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
+        if canal_escalacao:
+            participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
+            relatorio_msg = (
+                f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
+                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
+                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
+                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
+            )
+            relatorio_msg_enviada = await canal_escalacao.send(relatorio_msg)
+
+        async def apagar_depois_de_24h(msg_esc, msg_rel):
+            await asyncio.sleep(86400)
+            try:
+                if msg_esc:
+                    await msg_esc.delete()
+            except Exception as e:
+                print(f"Erro ao apagar mensagem de escalação automática: {e}")
+            try:
+                if msg_rel:
+                    await msg_rel.delete()
+            except Exception as e:
+                print(f"Erro ao apagar relatório automático: {e}")
+
+        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
+
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-# --- COMANDOS DE RANKING E RELATÓRIO ---
-@bot.command(name="ranking")
-async def ranking(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    jogadores = estatisticas_cla.get("jogadores", {})
-    if not jogadores:
-        await ctx.send("⚠️ O banco de dados ainda não possui registros de partidas. Envie prints com `!print`!", delete_after=10)
-        return
-
-    top_gols = sorted(jogadores.items(), key=lambda x: x[1]['gols'], reverse=True)[:5]
-    top_asts = sorted(jogadores.items(), key=lambda x: x[1]['assistencias'], reverse=True)[:5]
-    
-    embed = discord.Embed(
-        title="🏆 RANKING OFICIAL — ROIPIAU FC",
-        description=f"Partidas Registradas no Banco de Dados: `{estatisticas_cla['partidas_totais']}`\n\u200b",
-        color=discord.Color.gold()
-    )
-
-    gols_txt = "\n".join([f"`{idx+1}.` **{nome}** — ⚽ `{dados['gols']}` gols (`{dados['partidas']}` jogos)" for idx, (nome, dados) in enumerate(top_gols)])
-    asts_txt = "\n".join([f"`{idx+1}.` **{nome}** — 🎯 `{dados['assistencias']}` assistências" for idx, (nome, dados) in enumerate(top_asts)])
-
-    embed.add_field(name="⚽ Top Artilheiros", value=gols_txt or "*Nenhum dado*", inline=False)
-    embed.add_field(name="🎯 Top Assistências", value=asts_txt or "*Nenhum dado*", inline=False)
-    embed.set_footer(text="RoiPau FC Bot • Estatísticas gerais da temporada ⚽🔥")
-
-    await ctx.send(embed=embed)
-
-@bot.command(name="relatoriosemanal")
-async def relatorio_semanal(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    jogadores = estatisticas_cla.get("jogadores", {})
-    if not jogadores:
-        await ctx.send("⚠️ Não há dados suficientes no banco de dados para gerar o relatório semanal!", delete_after=10)
-        return
-
-    artilheiro = max(jogadores.items(), key=lambda x: x[1]['gols'])
-    garcom = max(jogadores.items(), key=lambda x: x[1]['assistencias'])
-    
-    melhor_media = max(
-        jogadores.items(), 
-        key=lambda x: (x[1]['soma_notas'] / x[1]['partidas']) if x[1]['partidas'] > 0 else 0
-    )
-    media_nota_val = (melhor_media[1]['soma_notas'] / melhor_media[1]['partidas']) if melhor_media[1]['partidas'] > 0 else 0
-
-    embed = discord.Embed(
-        title="📰 BALANÇO & RELATÓRIO SEMANAL — ROIPIAU FC",
-        description=f"Resumo oficial do desempenho do clã com base em `{estatisticas_cla['partidas_totais']}` partidas cadastradas.\n\u200b",
-        color=discord.Color.blue()
-    )
-
-    embed.add_field(name="⚽ Artilheiro da Semana", value=f"👑 **{artilheiro[0]}** com **{artilheiro[1]['gols']}** gols.", inline=False)
-    embed.add_field(name="🎯 Rei das Assistências", value=f"🎯 **{garcom[0]}** com **{garcom[1]['assistencias']}** passes para gol.", inline=False)
-    embed.add_field(name="⭐ Maior Média de Notas", value=f"⭐ **{melhor_media[0]}** com média de **{media_nota_val:.2f}** por partida!", inline=False)
-
-    embed.set_footer(text="RoiPau FC Bot • Relatório gerado automaticamente ⚽🔥")
-
-    canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
-    if canal_estatisticas:
-        await canal_estatisticas.send(embed=embed)
-    else:
-        await ctx.send(embed=embed)
-
-@bot.command(name="resetartemporada")
-async def resetar_temporada(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    global estatisticas_cla
-    estatisticas_cla = {"jogadores": {}, "partidas_totais": 0}
-    salvar_estats()
-    await ctx.send("🔄 **Banco de dados resetado com sucesso!** Uma nova temporada do RoiPau FC foi iniciada.", delete_after=12)
-
-# --- PAINEL DE COMANDOS COMPLETO ---
-@bot.command(name="comandos")
-async def comandos(ctx):
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    embed = discord.Embed(
-        title="⚽ PAINEL DE COMANDOS — ROIPIAU FC",
-        description="Lista completa de comandos oficiais do bot:\n\u200b",
-        color=discord.Color.blue()
-    )
-
-    embed.add_field(
-        name="📋 Gestão de Listas & Elencos",
-        value=(
-            "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria a convocação oficial.\n"
-            "`!listasativas` ou `!ativas`\n> Mostra convocações abertas.\n"
-            "`!simular <qtd>`\n> Simula inscrições de jogadores.\n"
-            "`!addtime <3 ou 4>`\n> Abre o 3º ou 4º time na lista.\n"
-            "`!remover @Jogador`\n> Remove um participante da lista.\n"
-            "`!fecharlista`\n> Sorteia e encerra a convocação."
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="📊 Estatísticas, Prints & Relatórios",
-        value=(
-            "`!print` (com imagem)\n> Envia print para análise de MVP e banco de dados.\n"
-            "`!ranking`\n> Mostra o top artilheiros e assistências.\n"
-            "`!relatoriosemanal`\n> Gera o balanço completo do clã.\n"
-            "`!resetartemporada`\n> Zera as estatísticas para nova temporada.\n"
-            "`!teste`\n> Mede o ping, latência e testa o sistema."
-        ),
-        inline=False
-    )
-
-    embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
-    await ctx.send(embed=embed)
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
