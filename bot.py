@@ -71,7 +71,7 @@ CANAL_ESCALACAO_ID = 1570429628588499086
 CANAL_PRINTS_ID = 1572265046002638878
 CANAL_ESTATISTICAS_ID = 1572265122066604212
 
-VERSAO_ATUAL = "v3.39"
+VERSAO_ATUAL = "v3.41"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -91,7 +91,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção de Modelos:** Atualizado para utilizar o modelo oficial `gemini-3.8-flash` com fallback estável!"
+                        "• **Blindagem contra Erro 503:** O comando `!print` agora possui sistema de reentupimento e tentativas automáticas (Retry) para evitar falhas por alta demanda!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -341,7 +341,7 @@ class ListaButtonsDinamica(discord.ui.View):
         await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
-# --- COMANDO !PRINT COM MODELO OFICIAL E FALLBACK ---
+# --- COMANDO !PRINT COM RETRY AUTOMÁTICO (BLINDAGEM CONTRA 503) ---
 @bot.command(name="print")
 async def cmd_print(ctx):
     if ctx.channel.id != CANAL_PRINTS_ID:
@@ -371,10 +371,9 @@ async def cmd_print(ctx):
 
     processing_msg = await ctx.send("🔄 **Print capturado, Lobinho!** A Inteligência Artificial da Gemini está analisando as estatísticas da partida e atualizando o banco de dados...")
 
-    # Utilizando o modelo oficial atual e uma rota de segurança se necessário
-    modelos_para_tentar = ['gemini-3.8-flash', 'gemini-3.8-flash']
-    response = None
+    max_tentativas = 5
     sucesso = False
+    response = None
     ultimo_erro = ""
 
     try:
@@ -390,10 +389,10 @@ async def cmd_print(ctx):
             "nome, nota, gols, assistencias para que possamos atualizar o banco de dados do clã."
         )
 
-        for modelo in modelos_para_tentar:
+        for tentativa in range(1, max_tentativas + 1):
             try:
                 response = gemini_client.models.generate_content(
-                    model=modelo,
+                    model='gemini-3.8-flash',
                     contents=[prompt, pil_image]
                 )
                 if response and response.text:
@@ -401,10 +400,15 @@ async def cmd_print(ctx):
                     break
             except Exception as e:
                 ultimo_erro = str(e)
-                continue
+                if "503" in ultimo_erro or "unavailable" in ultimo_erro.lower() or "high demand" in ultimo_erro.lower():
+                    if tentativa < max_tentativas:
+                        await asyncio.sleep(2)
+                        continue
+                else:
+                    break
 
         if not sucesso:
-            await processing_msg.edit(content=f"❌ Erro ao processar o print: `{ultimo_erro}`")
+            await processing_msg.edit(content=f"❌ O Google está com muita demanda após {max_tentativas} tentativas. Tente novamente em instantes! (Erro: `{ultimo_erro}`)")
             return
 
         texto_resposta = response.text if response and response.text else "Não foi possível extrair os dados da imagem."
@@ -467,6 +471,7 @@ async def cmd_print(ctx):
     except Exception as e:
         await processing_msg.edit(content=f"❌ Erro ao processar o print: `{e}`")
 
+# --- COMANDO DE RANKING ---
 @bot.command(name="ranking")
 async def ranking(ctx):
     try:
@@ -496,6 +501,60 @@ async def ranking(ctx):
     embed.set_footer(text="RoiPau FC Bot • Estatísticas gerais da temporada ⚽🔥")
 
     await ctx.send(embed=embed)
+
+# --- COMANDO DE RELATÓRIO SEMANAL ---
+@bot.command(name="relatoriosemanal")
+async def relatorio_semanal(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    jogadores = estatisticas_cla.get("jogadores", {})
+    if not jogadores:
+        await ctx.send("⚠️ Não há dados suficientes no banco de dados para gerar o relatório semanal!", delete_after=10)
+        return
+
+    artilheiro = max(jogadores.items(), key=lambda x: x[1]['gols'])
+    garcom = max(jogadores.items(), key=lambda x: x[1]['assistencias'])
+    
+    melhor_media = max(
+        jogadores.items(), 
+        key=lambda x: (x[1]['soma_notas'] / x[1]['partidas']) if x[1]['partidas'] > 0 else 0
+    )
+    media_nota_val = (melhor_media[1]['soma_notas'] / melhor_media[1]['partidas']) if melhor_media[1]['partidas'] > 0 else 0
+
+    embed = discord.Embed(
+        title="📰 BALANÇO & RELATÓRIO SEMANAL — ROIPIAU FC",
+        description=f"Resumo oficial do desempenho do clã com base em `{estatisticas_cla['partidas_totais']}` partidas cadastradas.\n\u200b",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="⚽ Artilheiro da Semana",
+        value=f"👑 **{artilheiro[0]}** com **{artilheiro[1]['gols']}** gols marcados em `{artilheiro[1]['partidas']}` jogos.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎯 Rei das Assistências",
+        value=f"🎯 **{garcom[0]}** com **{garcom[1]['assistencias']}** passes para gol.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="⭐ Maior Média de Notas",
+        value=f"⭐ **{melhor_media[0]}** mantendo uma média impressionante de **{media_nota_val:.2f}** por partida!",
+        inline=False
+    )
+
+    embed.set_footer(text="RoiPau FC Bot • Relatório gerado automaticamente ⚽🔥")
+
+    canal_estatisticas = bot.get_channel(CANAL_ESTATISTICAS_ID)
+    if canal_estatisticas:
+        await canal_estatisticas.send(embed=embed)
+    else:
+        await ctx.send(embed=embed)
 
 @bot.command(name="resetartemporada")
 async def resetar_temporada(ctx):
@@ -528,7 +587,8 @@ async def comandos(ctx):
             "`!criarlista <esquema>;<foco>;<titulo>;...`\n> Cria convocação oficial.\n"
             "`!listasativas` ou `!ativas`\n> Mostra convocações abertas.\n"
             "`!print` (com imagem)\n> Envia print para IA, analisa o MVP e atualiza o banco de dados.\n"
-            "`!ranking`\n> Mostra o ranking de artilheiros e estatísticas gerais do clã.\n"
+            "`!ranking`\n> Mostra o ranking de artilheiros e estatísticas gerais.\n"
+            "`!relatoriosemanal`\n> Gera o balanço completo com os destaques da semana.\n"
             "`!resetartemporada`\n> Zera as estatísticas para iniciar nova temporada."
         ),
         inline=False
