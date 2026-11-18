@@ -91,7 +91,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.89-CorrecaoLeituraGeral"
+VERSAO_ATUAL = "v3.91-RankingTotalmenteAutomatico"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -111,7 +111,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Leitura Flexível:** Suporte a todas as posições (ME, MD, LE, LD, etc.) e feedback imediato de sucesso ou erro ao processar estatísticas!"
+                        "• **Automação Total:** O ranking e a seleção da semana agora atualizam sozinhos a cada partida computada!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -138,7 +138,7 @@ async def on_raw_reaction_add(payload):
             except Exception as e:
                 print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
-# --- FUNÇÃO BLINDADA PARA ATUALIZAR O RANKING ---
+# --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING ---
 async def atualizar_canal_ranking():
     global estatisticas_cla
     estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
@@ -170,7 +170,6 @@ async def atualizar_canal_ranking():
         for nome, pos, media, dados_pos in ranking_expandido:
             linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {dados_pos.get('gols', 0)} | 🎯 {dados_pos.get('assistencias', 0)} | 🎮 {dados_pos.get('partidas', 0)}"
             
-            # Categorização unificada abrangendo todas as posições possíveis
             if pos in ["ATD", "ATE", "ATA"]:
                 cat = "ATAQUE"
             elif pos in ["GL", "GOL"]:
@@ -178,7 +177,7 @@ async def atualizar_canal_ranking():
             elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD"]:
                 cat = "DEFESA"
             else:
-                cat = "MEIO" # MEI, ME, MD, VOL, ALA, etc.
+                cat = "MEIO"
 
             posicoes_dict_ranking[cat].append((media, linha_txt))
 
@@ -215,14 +214,14 @@ async def atualizar_canal_ranking():
             if lista_jog:
                 embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
 
-        embed_rank.set_footer(text="RoiPau FC Bot • Use !relatoriodasemana para fechar o ciclo ou !atualizarranking para atualizar ⚽🔥")
+        embed_rank.set_footer(text="RoiPau FC Bot • O ranking atualiza automaticamente a cada partida! ⚽🔥")
         
         try:
-            async for msg in canal_ranking.history(limit=5):
+            async for msg in canal_ranking.history(limit=10):
                 if msg.author.id == bot.user.id:
                     await msg.delete()
         except Exception as e:
-            print(f"⚠️ Erro ao limpar mensagens antigas do ranking: {e}")
+            print(f"⚠️ Aviso ao limpar histórico do ranking: {e}")
         
         await canal_ranking.send(embed=embed_rank)
         return True
@@ -239,6 +238,7 @@ async def on_message(message):
     if message.channel.id == CANAL_DADOS_FECHADO_ID:
         conteudo = message.content.strip()
 
+        # Comando manual para fechar a semana e resetar
         if conteudo.lower() == "!relatoriodasemana":
             jogadores = estatisticas_cla.get("jogadores", {})
             if not jogadores:
@@ -295,17 +295,7 @@ async def on_message(message):
             await message.channel.send("🏆 **Relatório final gerado com sucesso!** O banco de dados estatístico foi zerado e está pronto para um novo ciclo.", delete_after=15)
             return
 
-        if conteudo.lower() == "!atualizarranking":
-            sucesso = await atualizar_canal_ranking()
-            if not sucesso:
-                await message.channel.send("⚠️ Não há dados estatísticos registrados para atualizar o ranking!", delete_after=10)
-                return
-
-            await message.add_reaction("✅")
-            await message.channel.send("🔄 **Ranking e Seleção da Semana atualizados com sucesso!** Os dados foram preservados.", delete_after=10)
-            return
-
-        # Processamento de linhas de partidas
+        # Processamento automático de linhas de partidas
         linhas = conteudo.split("\n")
         jogadores_processados = 0
         erros_linhas = []
@@ -348,10 +338,10 @@ async def on_message(message):
                     pos_Atual["soma_notas"] += nota
 
                     jogadores_processados += 1
-                except Exception as ex:
+                except Exception:
                     erros_linhas.append(linha)
             else:
-                if not linha.startswith("!"): # Ignora se for comando comum
+                if not linha.startswith("!"):
                     erros_linhas.append(linha)
 
         if jogadores_processados > 0:
@@ -361,16 +351,12 @@ async def on_message(message):
             canal_res = bot.get_channel(CANAL_RESULTADOS_ID)
             if canal_res:
                 embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
-                resumo_txt = []
-                # Pega um resumo rápido dos primeiros processados para exibir
                 embed_res.add_field(name="Status", value=f"Partida computada com sucesso! `{jogadores_processados}` jogadores registrados.", inline=False)
                 await canal_res.send(embed=embed_res)
 
+            # Atualiza o ranking automaticamente na hora
             await atualizar_canal_ranking()
             await message.add_reaction("✅")
-            
-            if erros_linhas:
-                await message.channel.send(f"⚠️ Atenção: `{len(jogadores_processados) if 'jogadores_processados' in locals() else jogadores_processados}` jogadores computados, mas algumas linhas falharam: ```{'\n'.join(erros_linhas[:3])}```", delete_after=15)
             return
         else:
             await message.channel.send("⚠️ Nenhuma linha válida encontrada no formato `Nome | Posição | Gols | Assistências | Nota`!", delete_after=10)
@@ -629,7 +615,6 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
-            "`!atualizarranking` (No canal fechado de dados)\n> Atualiza manualmente o painel da Seleção da Semana e Ranking sem zerar os dados.\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
@@ -797,7 +782,7 @@ async def teste(ctx):
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"📊 **Partidas Registradas no Banco:** `{estatisticas_cla.get('partidas_totais', 0)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!atualizarranking`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
