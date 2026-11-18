@@ -69,7 +69,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.82-MultiplasPosicoes"
+VERSAO_ATUAL = "v3.83-CompletoEstavel"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -89,7 +89,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Múltiplas Posições:** Agora os jogadores que atuam em posições diferentes pontuam e aparecem corretamente em todas as categorias em que jogaram!"
+                        "• **Múltiplas Posições & Correções:** Sistema otimizado para computar estatísticas por posição sem falhas!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -133,7 +133,6 @@ async def on_message(message):
                 await message.channel.send("⚠️ Não há dados estatísticos registrados para gerar o relatório!", delete_after=10)
                 return
 
-            # Descobre o melhor de cada categoria considerando todas as posições jogadas
             melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
             notas_melhores = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
 
@@ -155,7 +154,6 @@ async def on_message(message):
                         notas_melhores[cat] = media
                         melhores[cat] = (nome, pos, media, dados_pos['gols'], dados_pos['assistencias'], dados_pos['partidas'])
 
-            # Envia o relatório de parabéns no canal de melhores da semana
             canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
             if canal_ranking:
                 embed_rel = discord.Embed(
@@ -177,7 +175,6 @@ async def on_message(message):
                 embed_rel.set_footer(text="RoiPau FC • O ciclo semanal foi encerrado e zerado para a próxima temporada! ⚽🔥")
                 await canal_ranking.send(embed=embed_rel)
 
-            # Reseta o banco de dados estatísticos
             estatisticas_cla["jogadores"] = {}
             estatisticas_cla["partidas_totais"] = 0
             salvar_estats()
@@ -205,7 +202,6 @@ async def on_message(message):
                 if nome not in jogadores:
                     jogadores[nome] = {"posicoes": {}}
                 
-                # Migração de segurança para bases antigas que usavam o formato antigo
                 if "posicoes" not in jogadores[nome]:
                     pos_antiga = jogadores[nome].get("posicao", "MEI")
                     jogadores[nome]["posicoes"] = {
@@ -221,7 +217,6 @@ async def on_message(message):
                 if posicao not in posicoes_dict:
                     posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
 
-                # Atualiza os dados específicos daquela posição nesta partida
                 pos_Atual = posicoes_dict[posicao]
                 pos_Atual["partidas"] += 1
                 pos_Atual["gols"] += gols
@@ -234,7 +229,6 @@ async def on_message(message):
             estatisticas_cla["partidas_totais"] += 1
             salvar_estats()
 
-            # 1. Posta o resultado da partida no canal de resultados
             canal_res = bot.get_channel(CANAL_RESULTADOS_ID)
             if canal_res:
                 embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
@@ -244,12 +238,10 @@ async def on_message(message):
                 embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
                 await canal_res.send(embed=embed_res)
 
-            # 2. Atualiza e posta o Ranking Semanal + Seleção da Semana no canal correspondente
             canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
             if canal_ranking:
                 jogadores = estatisticas_cla.get("jogadores", {})
                 
-                # Prepara a lista de entradas expandida por posição (cada atuação do jogador gera uma linha no ranking daquela posição)
                 ranking_expandido = []
                 for nome, info in jogadores.items():
                     posicoes_dict = info.get("posicoes", {})
@@ -259,7 +251,6 @@ async def on_message(message):
                             media = dados_pos["soma_notas"] / partes_partidas
                             ranking_expandido.append((nome, pos, media, dados_pos))
 
-                # Ordena do melhor para o pior globalmente para o topo e seleção
                 melhores_semana = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
                 notas_melhores_semana = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
 
@@ -283,7 +274,6 @@ async def on_message(message):
                         notas_melhores_semana[cat] = media
                         melhores_semana[cat] = (nome, pos, media)
 
-                # Ordena cada categoria de posição individualmente pela média
                 for cat in posicoes_dict_ranking:
                     posicoes_dict_ranking[cat].sort(key=lambda x: x[0], reverse=True)
                     posicoes_dict_ranking[cat] = [item[1] for item in posicoes_dict_ranking[cat]]
@@ -298,7 +288,6 @@ async def on_message(message):
                     color=discord.Color.gold()
                 )
 
-                # Adiciona o quadro exclusivo da Seleção da Semana no topo
                 selecao_txt = []
                 emojis_sel = {"ATAQUE": "🎯 Ataque", "MEIO": "⚙️ Meio", "DEFESA": "🛡️ Defesa", "GOLEIRO": "🧤 Goleiro"}
                 for cat, dados_craque in melhores_semana.items():
@@ -310,14 +299,12 @@ async def on_message(message):
                     embed_rank.add_field(name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)", value="\n".join(selecao_txt), inline=False)
                     embed_rank.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
-                # Adiciona as categorias completas logo abaixo
                 for cat, lista_jog in posicoes_dict_ranking.items():
                     if lista_jog:
                         embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
 
                 embed_rank.set_footer(text="RoiPau FC Bot • Use !relatoriodasemana no canal fechado para fechar o ciclo ⚽🔥")
                 
-                # Apaga mensagens anteriores do bot no canal de ranking para manter limpo
                 async for msg in canal_ranking.history(limit=5):
                     if msg.author.id == bot.user.id:
                         try:
@@ -1173,4 +1160,32 @@ async def fechar_lista(ctx):
             participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
             relatorio_msg = (
                 f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
-                f"🏆 **Muito obrigado
+                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
+                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
+                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
+            )
+            relatorio_msg_enviada = await canal_escalacao.send(relatorio_msg)
+
+        async def apagar_depois_de_24h(msg_esc, msg_rel):
+            await asyncio.sleep(86400)
+            try:
+                if msg_esc:
+                    await msg_esc.delete()
+            except Exception as e:
+                print(f"Erro ao apagar mensagem de escalação automática: {e}")
+            try:
+                if msg_rel:
+                    await msg_rel.delete()
+            except Exception as e:
+                print(f"Erro ao apagar relatório automático: {e}")
+
+        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
+
+    except Exception as e:
+        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
+
+TOKEN = os.environ.get("DISCORD_TOKEN")
+if not TOKEN:
+    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada nas variáveis de ambiente do Render!")
+else:
+    bot.run(TOKEN)
