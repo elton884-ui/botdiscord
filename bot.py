@@ -91,7 +91,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.93-LegendaDetalhadaRanking"
+VERSAO_ATUAL = "v3.95-ValidacaoRigorosaErros"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -111,7 +111,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Legenda no Ranking:** Adicionada legenda explicativa detalhada no painel de estatísticas da semana!"
+                        "• **Validação de Erros:** Se houver erro de digitação nas linhas de estatísticas, o bot avisa o erro na hora e não altera o ranking!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -138,7 +138,7 @@ async def on_raw_reaction_add(payload):
             except Exception as e:
                 print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
-# --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING COM LEGENDA ---
+# --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING ---
 async def atualizar_canal_ranking():
     global estatisticas_cla
     estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
@@ -174,7 +174,7 @@ async def atualizar_canal_ranking():
                 cat = "ATAQUE"
             elif pos in ["GL", "GOL"]:
                 cat = "GOLEIRO"
-            elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD"]:
+            elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
                 cat = "DEFESA"
             else:
                 cat = "MEIO"
@@ -220,14 +220,15 @@ async def atualizar_canal_ranking():
 
         embed_rank.set_footer(text="RoiPau FC Bot • O ranking atualiza automaticamente a cada partida! ⚽🔥")
         
+        nova_msg = await canal_ranking.send(embed=embed_rank)
+        
         try:
             async for msg in canal_ranking.history(limit=10):
-                if msg.author.id == bot.user.id:
+                if msg.author.id == bot.user.id and msg.id != nova_msg.id:
                     await msg.delete()
         except Exception as e:
-            print(f"⚠️ Aviso ao limpar histórico do ranking: {e}")
-        
-        await canal_ranking.send(embed=embed_rank)
+            print(f"⚠️ Aviso ao limpar histórico antigo do ranking: {e}")
+            
         return True
     except Exception as e:
         print(f"❌ Erro crítico ao atualizar canal de ranking: {e}")
@@ -260,7 +261,7 @@ async def on_message(message):
                         cat = "ATAQUE"
                     elif pos in ["GL", "GOL"]:
                         cat = "GOLEIRO"
-                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD"]:
+                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
                         cat = "DEFESA"
                     else:
                         cat = "MEIO"
@@ -345,6 +346,16 @@ async def on_message(message):
             else:
                 if not linha.startswith("!"):
                     erros_linhas.append(linha)
+
+        # Se houver qualquer erro de formatação nas linhas, avisa e NÃO computa nada
+        if erros_linhas:
+            erro_txt = "\n".join([f"• `{l}`" for l in erros_linhas])
+            await message.channel.send(
+                f"❌ **Erro de formação detectado!** As seguintes linhas estão fora do padrão `Nome | Posição | Gols | Assistências | Nota`:\n{erro_txt}\n\n"
+                "⚠️ *Nenhuma partida foi computada para proteger o ranking.* Corrija e envie novamente!",
+                delete_after=20
+            )
+            return
 
         if jogadores_processados:
             estatisticas_cla["partidas_totais"] += 1
