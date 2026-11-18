@@ -30,7 +30,7 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON ---
+# --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON (BLINDADA) ---
 ARQUIVO_DADOS = "listas_ativas.json"
 ARQUIVO_ESTATS = "estatisticas_cla.json"
 
@@ -39,7 +39,29 @@ def carregar_json(arquivo, padrao):
         try:
             with open(arquivo, "r", encoding="utf-8") as f:
                 dados_brutos = json.load(f)
-                return {int(k) if arquivo == ARQUIVO_DADOS and str(k).isdigit() else k: v for k, v in dados_brutos.items()}
+                if arquivo == ARQUIVO_DADOS:
+                    return {int(k) if str(k).isdigit() else k: v for k, v in dados_brutos.items()}
+                elif arquivo == ARQUIVO_ESTATS:
+                    if not isinstance(dados_brutos, dict):
+                        return padrao
+                    if "jogadores" not in dados_brutos:
+                        dados_brutos["jogadores"] = {}
+                    if "partidas_totais" not in dados_brutos:
+                        dados_brutos["partidas_totais"] = 0
+                    
+                    for nome, info in list(dados_brutos["jogadores"].items()):
+                        if "posicoes" not in info:
+                            pos_antiga = info.get("posicao", "MEI")
+                            info["posicoes"] = {
+                                pos_antiga: {
+                                    "partidas": info.get("partidas", 0),
+                                    "gols": info.get("gols", 0),
+                                    "assistencias": info.get("assistencias", 0),
+                                    "soma_notas": info.get("soma_notas", 0.0)
+                                }
+                            }
+                    return dados_brutos
+                return dados_brutos
         except Exception as e:
             print(f"⚠️ Erro ao carregar {arquivo}: {e}")
     return padrao
@@ -52,7 +74,7 @@ def salvar_json(arquivo, dados):
         print(f"⚠️ Erro ao salvar {arquivo}: {e}")
 
 listas_ativas = carregar_json(ARQUIVO_DADOS, {})
-listas_ativas = {int(k): v for k, v in listas_ativas.items()}
+listas_ativas = {int(k): v for k, v in listas_ativas.items() if str(k).isdigit() or isinstance(k, int)}
 
 estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
 
@@ -69,7 +91,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.83-CompletoEstavel"
+VERSAO_ATUAL = "v3.89-CorrecaoLeituraGeral"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -89,7 +111,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Múltiplas Posições & Correções:** Sistema otimizado para computar estatísticas por posição sem falhas!"
+                        "• **Leitura Flexível:** Suporte a todas as posições (ME, MD, LE, LD, etc.) e feedback imediato de sucesso ou erro ao processar estatísticas!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -116,17 +138,107 @@ async def on_raw_reaction_add(payload):
             except Exception as e:
                 print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
+# --- FUNÇÃO BLINDADA PARA ATUALIZAR O RANKING ---
+async def atualizar_canal_ranking():
+    global estatisticas_cla
+    estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
+    
+    try:
+        canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
+        if not canal_ranking:
+            print("⚠️ Canal de melhores da semana não encontrado!")
+            return False
+
+        jogadores = estatisticas_cla.get("jogadores", {})
+        if not jogadores:
+            return False
+
+        ranking_expandido = []
+        for nome, info in jogadores.items():
+            posicoes_dict = info.get("posicoes", {})
+            for pos, dados_pos in posicoes_dict.items():
+                partes_partidas = dados_pos.get("partidas", 0)
+                if partes_partidas > 0:
+                    media = dados_pos.get("soma_notas", 0.0) / partes_partidas
+                    ranking_expandido.append((nome, pos, media, dados_pos))
+
+        melhores_semana = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
+        notas_melhores_semana = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
+
+        posicoes_dict_ranking = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
+
+        for nome, pos, media, dados_pos in ranking_expandido:
+            linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {dados_pos.get('gols', 0)} | 🎯 {dados_pos.get('assistencias', 0)} | 🎮 {dados_pos.get('partidas', 0)}"
+            
+            # Categorização unificada abrangendo todas as posições possíveis
+            if pos in ["ATD", "ATE", "ATA"]:
+                cat = "ATAQUE"
+            elif pos in ["GL", "GOL"]:
+                cat = "GOLEIRO"
+            elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD"]:
+                cat = "DEFESA"
+            else:
+                cat = "MEIO" # MEI, ME, MD, VOL, ALA, etc.
+
+            posicoes_dict_ranking[cat].append((media, linha_txt))
+
+            if media > notas_melhores_semana[cat]:
+                notas_melhores_semana[cat] = media
+                melhores_semana[cat] = (nome, pos, media)
+
+        for cat in posicoes_dict_ranking:
+            posicoes_dict_ranking[cat].sort(key=lambda x: x[0], reverse=True)
+            posicoes_dict_ranking[cat] = [item[1] for item in posicoes_dict_ranking[cat]]
+
+        embed_rank = discord.Embed(
+            title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
+            description=(
+                f"Partidas computadas no total: `{estatisticas_cla.get('partidas_totais', 0)}`\n\n"
+                "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
+                "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+            ),
+            color=discord.Color.gold()
+        )
+
+        selecao_txt = []
+        emojis_sel = {"ATAQUE": "🎯 Ataque", "MEIO": "⚙️ Meio", "DEFESA": "🛡️ Defesa", "GOLEIRO": "🧤 Goleiro"}
+        for cat, dados_craque in melhores_semana.items():
+            if dados_craque:
+                nome_c, pos_c, med_c = dados_craque
+                selecao_txt.append(f"• **{emojis_sel[cat]}:** {nome_c} (`{pos_c}`) — ⭐ **{med_c:.2f}**")
+        
+        if selecao_txt:
+            embed_rank.add_field(name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)", value="\n".join(selecao_txt), inline=False)
+            embed_rank.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
+
+        for cat, lista_jog in posicoes_dict_ranking.items():
+            if lista_jog:
+                embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
+
+        embed_rank.set_footer(text="RoiPau FC Bot • Use !relatoriodasemana para fechar o ciclo ou !atualizarranking para atualizar ⚽🔥")
+        
+        try:
+            async for msg in canal_ranking.history(limit=5):
+                if msg.author.id == bot.user.id:
+                    await msg.delete()
+        except Exception as e:
+            print(f"⚠️ Erro ao limpar mensagens antigas do ranking: {e}")
+        
+        await canal_ranking.send(embed=embed_rank)
+        return True
+    except Exception as e:
+        print(f"❌ Erro crítico ao atualizar canal de ranking: {e}")
+        return False
+
 # --- LISTENER AUTOMÁTICO DO CANAL FECHADO DE DADOS ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # Se a mensagem foi enviada no canal fechado de dados (dados-estatisticas)
     if message.channel.id == CANAL_DADOS_FECHADO_ID:
         conteudo = message.content.strip()
 
-        # Comando manual para fechar a semana e resetar
         if conteudo.lower() == "!relatoriodasemana":
             jogadores = estatisticas_cla.get("jogadores", {})
             if not jogadores:
@@ -145,7 +257,7 @@ async def on_message(message):
                         cat = "ATAQUE"
                     elif pos in ["GL", "GOL"]:
                         cat = "GOLEIRO"
-                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
+                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD"]:
                         cat = "DEFESA"
                     else:
                         cat = "MEIO"
@@ -183,49 +295,66 @@ async def on_message(message):
             await message.channel.send("🏆 **Relatório final gerado com sucesso!** O banco de dados estatístico foi zerado e está pronto para um novo ciclo.", delete_after=15)
             return
 
-        # Processamento normal de partida
+        if conteudo.lower() == "!atualizarranking":
+            sucesso = await atualizar_canal_ranking()
+            if not sucesso:
+                await message.channel.send("⚠️ Não há dados estatísticos registrados para atualizar o ranking!", delete_after=10)
+                return
+
+            await message.add_reaction("✅")
+            await message.channel.send("🔄 **Ranking e Seleção da Semana atualizados com sucesso!** Os dados foram preservados.", delete_after=10)
+            return
+
+        # Processamento de linhas de partidas
         linhas = conteudo.split("\n")
-        jogadores_processados = []
+        jogadores_processados = 0
+        erros_linhas = []
 
         for linha in linhas:
             if not linha.strip():
                 continue
             partes = [p.strip() for p in linha.split("|")]
             if len(partes) >= 5:
-                nome = partes[0]
-                posicao = partes[1].upper()
-                gols = int(partes[2])
-                assistencias = int(partes[3])
-                nota = float(partes[4].replace(",", "."))
+                try:
+                    nome = partes[0]
+                    posicao = partes[1].upper()
+                    gols = int(partes[2])
+                    assistencias = int(partes[3])
+                    nota = float(partes[4].replace(",", "."))
 
-                jogadores = estatisticas_cla.setdefault("jogadores", {})
-                if nome not in jogadores:
-                    jogadores[nome] = {"posicoes": {}}
-                
-                if "posicoes" not in jogadores[nome]:
-                    pos_antiga = jogadores[nome].get("posicao", "MEI")
-                    jogadores[nome]["posicoes"] = {
-                        pos_antiga: {
-                            "partidas": jogadores[nome].get("partidas", 0),
-                            "gols": jogadores[nome].get("gols", 0),
-                            "assistencias": jogadores[nome].get("assistencias", 0),
-                            "soma_notas": jogadores[nome].get("soma_notas", 0.0)
+                    jogadores = estatisticas_cla.setdefault("jogadores", {})
+                    if nome not in jogadores:
+                        jogadores[nome] = {"posicoes": {}}
+                    
+                    if "posicoes" not in jogadores[nome]:
+                        pos_antiga = jogadores[nome].get("posicao", "MEI")
+                        jogadores[nome]["posicoes"] = {
+                            pos_antiga: {
+                                "partidas": jogadores[nome].get("partidas", 0),
+                                "gols": jogadores[nome].get("gols", 0),
+                                "assistencias": jogadores[nome].get("assistencias", 0),
+                                "soma_notas": jogadores[nome].get("soma_notas", 0.0)
+                            }
                         }
-                    }
 
-                posicoes_dict = jogadores[nome]["posicoes"]
-                if posicao not in posicoes_dict:
-                    posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
+                    posicoes_dict = jogadores[nome]["posicoes"]
+                    if posicao not in posicoes_dict:
+                        posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
 
-                pos_Atual = posicoes_dict[posicao]
-                pos_Atual["partidas"] += 1
-                pos_Atual["gols"] += gols
-                pos_Atual["assistencias"] += assistencias
-                pos_Atual["soma_notas"] += nota
+                    pos_Atual = posicoes_dict[posicao]
+                    pos_Atual["partidas"] += 1
+                    pos_Atual["gols"] += gols
+                    pos_Atual["assistencias"] += assistencias
+                    pos_Atual["soma_notas"] += nota
 
-                jogadores_processados.append((nome, posicao, gols, assistencias, nota))
+                    jogadores_processados += 1
+                except Exception as ex:
+                    erros_linhas.append(linha)
+            else:
+                if not linha.startswith("!"): # Ignora se for comando comum
+                    erros_linhas.append(linha)
 
-        if jogadores_processados:
+        if jogadores_processados > 0:
             estatisticas_cla["partidas_totais"] += 1
             salvar_estats()
 
@@ -233,89 +362,18 @@ async def on_message(message):
             if canal_res:
                 embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
                 resumo_txt = []
-                for jp in jogadores_processados:
-                    resumo_txt.append(f"• **{jp[0]}** (`{jp[1]}`) — ⭐ {jp[4]} | ⚽ {jp[2]} | 🎯 {jp[3]}")
-                embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
+                # Pega um resumo rápido dos primeiros processados para exibir
+                embed_res.add_field(name="Status", value=f"Partida computada com sucesso! `{jogadores_processados}` jogadores registrados.", inline=False)
                 await canal_res.send(embed=embed_res)
 
-            canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
-            if canal_ranking:
-                jogadores = estatisticas_cla.get("jogadores", {})
-                
-                ranking_expandido = []
-                for nome, info in jogadores.items():
-                    posicoes_dict = info.get("posicoes", {})
-                    for pos, dados_pos in posicoes_dict.items():
-                        partes_partidas = dados_pos["partidas"]
-                        if partes_partidas > 0:
-                            media = dados_pos["soma_notas"] / partes_partidas
-                            ranking_expandido.append((nome, pos, media, dados_pos))
-
-                melhores_semana = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
-                notas_melhores_semana = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
-
-                posicoes_dict_ranking = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
-
-                for nome, pos, media, dados_pos in ranking_expandido:
-                    linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {dados_pos['gols']} | 🎯 {dados_pos['assistencias']} | 🎮 {dados_pos['partidas']}"
-                    
-                    if pos in ["ATD", "ATE", "ATA"]:
-                        cat = "ATAQUE"
-                    elif pos in ["GL", "GOL"]:
-                        cat = "GOLEIRO"
-                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
-                        cat = "DEFESA"
-                    else:
-                        cat = "MEIO"
-
-                    posicoes_dict_ranking[cat].append((media, linha_txt))
-
-                    if media > notas_melhores_semana[cat]:
-                        notas_melhores_semana[cat] = media
-                        melhores_semana[cat] = (nome, pos, media)
-
-                for cat in posicoes_dict_ranking:
-                    posicoes_dict_ranking[cat].sort(key=lambda x: x[0], reverse=True)
-                    posicoes_dict_ranking[cat] = [item[1] for item in posicoes_dict_ranking[cat]]
-
-                embed_rank = discord.Embed(
-                    title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
-                    description=(
-                        f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\n"
-                        "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
-                        "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
-                    ),
-                    color=discord.Color.gold()
-                )
-
-                selecao_txt = []
-                emojis_sel = {"ATAQUE": "🎯 Ataque", "MEIO": "⚙️ Meio", "DEFESA": "🛡️ Defesa", "GOLEIRO": "🧤 Goleiro"}
-                for cat, dados_craque in melhores_semana.items():
-                    if dados_craque:
-                        nome_c, pos_c, med_c = dados_craque
-                        selecao_txt.append(f"• **{emojis_sel[cat]}:** {nome_c} (`{pos_c}`) — ⭐ **{med_c:.2f}**")
-                
-                if selecao_txt:
-                    embed_rank.add_field(name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)", value="\n".join(selecao_txt), inline=False)
-                    embed_rank.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
-
-                for cat, lista_jog in posicoes_dict_ranking.items():
-                    if lista_jog:
-                        embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
-
-                embed_rank.set_footer(text="RoiPau FC Bot • Use !relatoriodasemana no canal fechado para fechar o ciclo ⚽🔥")
-                
-                async for msg in canal_ranking.history(limit=5):
-                    if msg.author.id == bot.user.id:
-                        try:
-                            await msg.delete()
-                        except Exception:
-                            pass
-                
-                await canal_ranking.send(embed=embed_rank)
-
+            await atualizar_canal_ranking()
             await message.add_reaction("✅")
+            
+            if erros_linhas:
+                await message.channel.send(f"⚠️ Atenção: `{len(jogadores_processados) if 'jogadores_processados' in locals() else jogadores_processados}` jogadores computados, mas algumas linhas falharam: ```{'\n'.join(erros_linhas[:3])}```", delete_after=15)
             return
+        else:
+            await message.channel.send("⚠️ Nenhuma linha válida encontrada no formato `Nome | Posição | Gols | Assistências | Nota`!", delete_after=10)
 
     await bot.process_commands(message)
 
@@ -571,6 +629,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
+            "`!atualizarranking` (No canal fechado de dados)\n> Atualiza manualmente o painel da Seleção da Semana e Ranking sem zerar os dados.\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
@@ -737,8 +796,8 @@ async def teste(ctx):
         f"🟢 **Status da Conexão:** Online e Operacional\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"📊 **Partidas Registradas no Banco:** `{estatisticas_cla['partidas_totais']}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
+        f"📊 **Partidas Registradas no Banco:** `{estatisticas_cla.get('partidas_totais', 0)}`\n"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!atualizarranking`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
     )
     
     await ctx.send(feedback_msg, delete_after=15)
