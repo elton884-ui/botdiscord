@@ -91,7 +91,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.95-ValidacaoRigorosaErros"
+VERSAO_ATUAL = "v3.96-SuporteTotalATE_ATD"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -111,7 +111,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Validação de Erros:** Se houver erro de digitação nas linhas de estatísticas, o bot avisa o erro na hora e não altera o ranking!"
+                        "• **Posição ATE Corrigida:** Adicionado suporte total para a posição `ATE` no ataque!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -311,6 +311,13 @@ async def on_message(message):
                 try:
                     nome = partes[0]
                     posicao = partes[1].upper()
+                    
+                    # Validação estrita de posições aceitas para evitar falhas silenciosas
+                    posicoes_validas = ["ATD", "ATE", "ATA", "GL", "GOL", "ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD", "VOL", "MEI", "ME", "MD", "ALA"]
+                    if posicao not in posicoes_validas:
+                        erros_linhas.append(f"{linha} (Posição '{posicao}' inválida)")
+                        continue
+
                     gols = int(partes[2])
                     assistencias = int(partes[3])
                     nota = float(partes[4].replace(",", "."))
@@ -324,7 +331,7 @@ async def on_message(message):
                         jogadores[nome]["posicoes"] = {
                             pos_antiga: {
                                 "partidas": jogadores[nome].get("partidas", 0),
-                                "gols": jogadores[nome].get("gols", 0),
+                                "gols": jogodores[nome].get("gols", 0) if "jogadores" in locals() else 0,
                                 "assistencias": jogadores[nome].get("assistencias", 0),
                                 "soma_notas": jogadores[nome].get("soma_notas", 0.0)
                             }
@@ -347,11 +354,10 @@ async def on_message(message):
                 if not linha.startswith("!"):
                     erros_linhas.append(linha)
 
-        # Se houver qualquer erro de formatação nas linhas, avisa e NÃO computa nada
         if erros_linhas:
             erro_txt = "\n".join([f"• `{l}`" for l in erros_linhas])
             await message.channel.send(
-                f"❌ **Erro de formação detectado!** As seguintes linhas estão fora do padrão `Nome | Posição | Gols | Assistências | Nota`:\n{erro_txt}\n\n"
+                f"❌ **Erro de formação ou posição detectado!** Verifique as linhas abaixo:\n{erro_txt}\n\n"
                 "⚠️ *Nenhuma partida foi computada para proteger o ranking.* Corrija e envie novamente!",
                 delete_after=20
             )
