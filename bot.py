@@ -31,19 +31,24 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def conectar_db():
     if not DATABASE_URL:
         return None
-    url = urlparse(DATABASE_URL)
-    return psycopg2.connect(
-        database=url.path[1:],
-        user=url.username,
-        password=url.password,
-        host=url.hostname,
-        port=url.port
-    )
+    try:
+        url = urlparse(DATABASE_URL)
+        return psycopg2.connect(
+            database=url.path[1:],
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port,
+            connect_timeout=5
+        )
+    except Exception as e:
+        print(f"⚠️ Erro ao conectar no PostgreSQL: {e}")
+        return None
 
 def inicializar_tabelas():
     conn = conectar_db()
     if not conn:
-        print("⚠️ Aviso: DATABASE_URL não configurada! O bot usará armazenamento local temporário.")
+        print("⚠️ Aviso: DATABASE_URL não configurada ou sem conexão!")
         return
     try:
         cur = conn.cursor()
@@ -94,11 +99,12 @@ def salvar_no_db(chave, dados):
     except Exception as e:
         print(f"⚠️ Erro ao salvar {chave} no banco: {e}")
 
-# Carregando dados da nuvem
-listas_ativas = carregar_db_formatado() # função auxiliar abaixo
 def carregar_dados_iniciais():
-    raw_listas = carregar_do_db("listas_ativas", {})
-    return {int(k) if str(k).isdigit() else k: v for k, v in raw_listas.items()}
+    try:
+        raw_listas = carregar_do_db("listas_ativas", {})
+        return {int(k) if str(k).isdigit() else k: v for k, v in raw_listas.items()}
+    except Exception:
+        return {}
 
 listas_ativas = carregar_dados_iniciais()
 estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
@@ -123,7 +129,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.97-CloudPostgreSQL"
+VERSAO_ATUAL = "v3.99-CloudPostgresFix"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -143,14 +149,14 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Banco de Dados na Nuvem:** Estatísticas e listas migradas para o PostgreSQL. Seus dados agora estão blindados contra reboots!"
+                        "• **Correção na Nuvem:** Erro de inicialização resolvido. Bot totalmente integrado ao PostgreSQL!"
                     )
                     await channel.send(changelog_msg)
                     
                     with open(ARQUIVO_VERSAO, "w") as f:
                         f.write(VERSAO_ATUAL)
                 else:
-                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando com banco na nuvem! ⚽🔥")
+                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando perfeitamente na nuvem! ⚽🔥")
                     
             except Exception as e:
                 print(f"Erro ao enviar mensagem de aviso no canal: {e}")
@@ -419,7 +425,7 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# [As demais funções de listas, formações e comandos continuam idênticas abaixo...]
+# --- FORMAÇÕES E CONFIGURAÇÕES DE LISTAS ---
 FORMAGOES = {
     "352":  {"GOL": 1, "ZAG": 3, "VOL": 2, "ALA": 2, "MEI": 1, "ATA": 2},
     "433":  {"GOL": 1, "LAT": 2, "ZAG": 2, "VOL": 1, "MEI": 2, "ATA": 3},
@@ -1305,11 +1311,6 @@ async def fechar_lista(ctx):
 
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-# Função auxiliar para carregar listas formatadas
-def carregar_db_formatado():
-    raw_listas = carregar_do_db("listas_ativas", {})
-    return {int(k) if str(k).isdigit() else k: v for k, v in raw_listas.items()}
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
