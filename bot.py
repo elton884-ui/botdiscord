@@ -69,7 +69,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.81-ComandosAtualizado"
+VERSAO_ATUAL = "v3.82-MultiplasPosicoes"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -89,8 +89,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Seleção da Semana:** Quadro especial com os melhores de cada posição integrado ao ranking!\n"
-                        "• **Relatório Final & Reset:** Comando `!relatoriodasemana` adicionado e visível no painel `!comandos`!"
+                        "• **Múltiplas Posições:** Agora os jogadores que atuam em posições diferentes pontuam e aparecem corretamente em todas as categorias em que jogaram!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -134,26 +133,27 @@ async def on_message(message):
                 await message.channel.send("⚠️ Não há dados estatísticos registrados para gerar o relatório!", delete_after=10)
                 return
 
-            # Descobre o melhor de cada categoria
+            # Descobre o melhor de cada categoria considerando todas as posições jogadas
             melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
             notas_melhores = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
 
             for nome, info in jogadores.items():
-                media = info["soma_notas"] / info["partidas"] if info["partidas"] > 0 else 0
-                pos = info.get("posicao", "MEI")
+                posicoes_jogador = info.get("posicoes", {})
+                for pos, dados_pos in posicoes_jogador.items():
+                    media = dados_pos["soma_notas"] / dados_pos["partidas"] if dados_pos["partidas"] > 0 else 0
 
-                if pos in ["ATD", "ATE", "ATA"]:
-                    cat = "ATAQUE"
-                elif pos in ["GL", "GOL"]:
-                    cat = "GOLEIRO"
-                elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
-                    cat = "DEFESA"
-                else:
-                    cat = "MEIO"
+                    if pos in ["ATD", "ATE", "ATA"]:
+                        cat = "ATAQUE"
+                    elif pos in ["GL", "GOL"]:
+                        cat = "GOLEIRO"
+                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT"]:
+                        cat = "DEFESA"
+                    else:
+                        cat = "MEIO"
 
-                if media > notas_melhores[cat]:
-                    notas_melhores[cat] = media
-                    melhores[cat] = (nome, pos, media, info['gols'], info['assistencias'], info['partidas'])
+                    if media > notas_melhores[cat]:
+                        notas_melhores[cat] = media
+                        melhores[cat] = (nome, pos, media, dados_pos['gols'], dados_pos['assistencias'], dados_pos['partidas'])
 
             # Envia o relatório de parabéns no canal de melhores da semana
             canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
@@ -203,16 +203,30 @@ async def on_message(message):
 
                 jogadores = estatisticas_cla.setdefault("jogadores", {})
                 if nome not in jogadores:
-                    jogadores[nome] = {"posicao": posicao, "partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0, "nota_mais_alta": 0.0}
+                    jogadores[nome] = {"posicoes": {}}
                 
-                j = jogadores[nome]
-                j["posicao"] = posicao
-                j["partidas"] += 1
-                j["gols"] += gols
-                j["assistencias"] += assistencias
-                j["soma_notas"] += nota
-                if nota > j["nota_mais_alta"]:
-                    j["nota_mais_alta"] = nota
+                # Migração de segurança para bases antigas que usavam o formato antigo
+                if "posicoes" not in jogadores[nome]:
+                    pos_antiga = jogadores[nome].get("posicao", "MEI")
+                    jogadores[nome]["posicoes"] = {
+                        pos_antiga: {
+                            "partidas": jogadores[nome].get("partidas", 0),
+                            "gols": jogadores[nome].get("gols", 0),
+                            "assistencias": jogadores[nome].get("assistencias", 0),
+                            "soma_notas": jogadores[nome].get("soma_notas", 0.0)
+                        }
+                    }
+
+                posicoes_dict = jogadores[nome]["posicoes"]
+                if posicao not in posicoes_dict:
+                    posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
+
+                # Atualiza os dados específicos daquela posição nesta partida
+                pos_Atual = posicoes_dict[posicao]
+                pos_Atual["partidas"] += 1
+                pos_Atual["gols"] += gols
+                pos_Atual["assistencias"] += assistencias
+                pos_Atual["soma_notas"] += nota
 
                 jogadores_processados.append((nome, posicao, gols, assistencias, nota))
 
@@ -234,31 +248,25 @@ async def on_message(message):
             canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
             if canal_ranking:
                 jogadores = estatisticas_cla.get("jogadores", {})
-                ranking_ordenado = sorted(
-                    jogadores.items(),
-                    key=lambda x: (x[1]["soma_notas"] / x[1]["partidas"] if x[1]["partidas"] > 0 else 0),
-                    reverse=True
-                )
+                
+                # Prepara a lista de entradas expandida por posição (cada atuação do jogador gera uma linha no ranking daquela posição)
+                ranking_expandido = []
+                for nome, info in jogadores.items():
+                    posicoes_dict = info.get("posicoes", {})
+                    for pos, dados_pos in posicoes_dict.items():
+                        partes_partidas = dados_pos["partidas"]
+                        if partes_partidas > 0:
+                            media = dados_pos["soma_notas"] / partes_partidas
+                            ranking_expandido.append((nome, pos, media, dados_pos))
 
-                embed_rank = discord.Embed(
-                    title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
-                    description=(
-                        f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\n"
-                        "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
-                        "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
-                    ),
-                    color=discord.Color.gold()
-                )
-
-                # Descobre o melhor de cada categoria para montar a Seleção da Semana
+                # Ordena do melhor para o pior globalmente para o topo e seleção
                 melhores_semana = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
                 notas_melhores_semana = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
 
-                posicoes_dict = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
-                for nome, info in ranking_ordenado:
-                    media = info["soma_notas"] / info["partidas"] if info["partidas"] > 0 else 0
-                    pos = info.get("posicao", "MEI")
-                    linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {info['gols']} | 🎯 {info['assistencias']} | 🎮 {info['partidas']}"
+                posicoes_dict_ranking = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
+
+                for nome, pos, media, dados_pos in ranking_expandido:
+                    linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {dados_pos['gols']} | 🎯 {dados_pos['assistencias']} | 🎮 {dados_pos['partidas']}"
                     
                     if pos in ["ATD", "ATE", "ATA"]:
                         cat = "ATAQUE"
@@ -269,11 +277,26 @@ async def on_message(message):
                     else:
                         cat = "MEIO"
 
-                    posicoes_dict[cat].append(linha_txt)
+                    posicoes_dict_ranking[cat].append((media, linha_txt))
 
                     if media > notas_melhores_semana[cat]:
                         notas_melhores_semana[cat] = media
                         melhores_semana[cat] = (nome, pos, media)
+
+                # Ordena cada categoria de posição individualmente pela média
+                for cat in posicoes_dict_ranking:
+                    posicoes_dict_ranking[cat].sort(key=lambda x: x[0], reverse=True)
+                    posicoes_dict_ranking[cat] = [item[1] for item in posicoes_dict_ranking[cat]]
+
+                embed_rank = discord.Embed(
+                    title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
+                    description=(
+                        f"Partidas computadas no total: `{estatisticas_cla['partidas_totais']}`\n\n"
+                        "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
+                        "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+                    ),
+                    color=discord.Color.gold()
+                )
 
                 # Adiciona o quadro exclusivo da Seleção da Semana no topo
                 selecao_txt = []
@@ -288,7 +311,7 @@ async def on_message(message):
                     embed_rank.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
                 # Adiciona as categorias completas logo abaixo
-                for cat, lista_jog in posicoes_dict.items():
+                for cat, lista_jog in posicoes_dict_ranking.items():
                     if lista_jog:
                         embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
 
@@ -1150,32 +1173,4 @@ async def fechar_lista(ctx):
             participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
             relatorio_msg = (
                 f"📋 **RELATÓRIO DE ESCALAÇÃO — {dados['titulo'].upper()}** ⚽\n\n"
-                f"🏆 **Muito obrigado a todos os jogadores que colaram e participaram da lista de hoje!**\n"
-                f"👥 **Participantes ({len(todos_participantes)}):** {participantes_str}\n\n"
-                f"🔥 *Bom jogo e ótima resenha a todos os membros do RoiPau FC!*"
-            )
-            relatorio_msg_enviada = await canal_escalacao.send(relatorio_msg)
-
-        async def apagar_depois_de_24h(msg_esc, msg_rel):
-            await asyncio.sleep(86400)
-            try:
-                if msg_esc:
-                    await msg_esc.delete()
-            except Exception as e:
-                print(f"Erro ao apagar mensagem de escalação automática: {e}")
-            try:
-                if msg_rel:
-                    await msg_rel.delete()
-            except Exception as e:
-                print(f"Erro ao apagar relatório automático: {e}")
-
-        bot.loop.create_task(apagar_depois_de_24h(msg_escalacao_enviada, relatorio_msg_enviada))
-
-    except Exception as e:
-        await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
-
-TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    print("❌ ERRO CRÍTICO: A variável DISCORD_TOKEN não foi encontrada nas variáveis de ambiente do Render!")
-else:
-    bot.run(TOKEN)
+                f"🏆 **Muito obrigado
