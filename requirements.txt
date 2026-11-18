@@ -1,6 +1,6 @@
 discord.py
-pillow
 aiohttp
 easyocr
 torch
 torchvision
+psycopg2-binary
