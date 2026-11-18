@@ -129,52 +129,8 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v4.0-NovasPosicoesMCE_MCD"
+VERSAO_ATUAL = "v4.3-RankingInstantaneo"
 ARQUIVO_VERSAO = "ultima_versao.txt"
-
-@bot.event
-async def on_ready():
-    print(f"Bot conectado como {bot.user}!")
-    
-    if CANAL_AVISO_ID:
-        channel = bot.get_channel(CANAL_AVISO_ID)
-        if channel:
-            try:
-                ultima_versao = ""
-                if os.path.exists(ARQUIVO_VERSAO):
-                    with open(ARQUIVO_VERSAO, "r", encoding="utf-8") as f:
-                        ultima_versao = f.read().strip()
-                
-                if ultima_versao != VERSAO_ATUAL:
-                    changelog_msg = (
-                        f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
-                        "📋 **O que há de novo:**\n"
-                        "• **Suporte a Novas Posições:** Adicionado suporte total para `MCE` e `MCD` no meio-campo!"
-                    )
-                    await channel.send(changelog_msg)
-                    
-                    with open(ARQUIVO_VERSAO, "w") as f:
-                        f.write(VERSAO_ATUAL)
-                else:
-                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando perfeitamente na nuvem! ⚽🔥")
-                    
-            except Exception as e:
-                print(f"Erro ao enviar mensagem de aviso no canal: {e}")
-
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.user_id == bot.user.id:
-        return
-
-    if payload.channel_id == CANAL_AVISO_ID:
-        if str(payload.emoji) == "✅":
-            try:
-                channel = bot.get_channel(payload.channel_id)
-                message = await channel.fetch_message(payload.message_id)
-                if message.author.id == bot.user.id:
-                    await message.delete()
-            except Exception as e:
-                print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
 # --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING ---
 async def atualizar_canal_ranking():
@@ -258,12 +214,17 @@ async def atualizar_canal_ranking():
 
         embed_rank.set_footer(text="RoiPau FC Bot • O ranking atualiza automaticamente a cada partida! ⚽🔥")
         
+        # Envia a nova mensagem primeiro
         nova_msg = await canal_ranking.send(embed=embed_rank)
         
+        # Remove as mensagens antigas do bot no canal de ranking
         try:
-            async for msg in canal_ranking.history(limit=10):
+            async for msg in canal_ranking.history(limit=15):
                 if msg.author.id == bot.user.id and msg.id != nova_msg.id:
-                    await msg.delete()
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"⚠️ Aviso ao limpar histórico antigo do ranking: {e}")
             
@@ -271,6 +232,53 @@ async def atualizar_canal_ranking():
     except Exception as e:
         print(f"❌ Erro crítico ao atualizar canal de ranking: {e}")
         return False
+
+@bot.event
+async def on_ready():
+    print(f"Bot conectado como {bot.user}!")
+    
+    # Atualiza o ranking ao ligar
+    await atualizar_canal_ranking()
+    
+    if CANAL_AVISO_ID:
+        channel = bot.get_channel(CANAL_AVISO_ID)
+        if channel:
+            try:
+                ultima_versao = ""
+                if os.path.exists(ARQUIVO_VERSAO):
+                    with open(ARQUIVO_VERSAO, "r", encoding="utf-8") as f:
+                        ultima_versao = f.read().strip()
+                
+                if ultima_versao != VERSAO_ATUAL:
+                    changelog_msg = (
+                        f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
+                        "📋 **O que há de novo:**\n"
+                        "• **Atualização Instantânea:** Ajustado o gatilho de partidas para forçar a atualização imediata do ranking."
+                    )
+                    await channel.send(changelog_msg)
+                    
+                    with open(ARQUIVO_VERSAO, "w") as f:
+                        f.write(VERSAO_ATUAL)
+                else:
+                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando perfeitamente! ⚽🔥")
+                    
+            except Exception as e:
+                print(f"Erro ao enviar mensagem de aviso no canal: {e}")
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    if payload.user_id == bot.user.id:
+        return
+
+    if payload.channel_id == CANAL_AVISO_ID:
+        if str(payload.emoji) == "✅":
+            try:
+                channel = bot.get_channel(payload.channel_id)
+                message = await channel.fetch_message(payload.message_id)
+                if message.author.id == bot.user.id:
+                    await message.delete()
+            except Exception as e:
+                print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
 # --- LISTENER AUTOMÁTICO DO CANAL FECHADO DE DADOS ---
 @bot.event
@@ -417,6 +425,7 @@ async def on_message(message):
                 embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
                 await canal_res.send(embed=embed_res)
 
+            # Força a atualização imediata do canal de melhores da semana
             await atualizar_canal_ranking()
             await message.add_reaction("✅")
             return
