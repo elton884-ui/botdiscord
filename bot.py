@@ -91,7 +91,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.91-RankingTotalmenteAutomatico"
+VERSAO_ATUAL = "v3.93-LegendaDetalhadaRanking"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -111,7 +111,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Automação Total:** O ranking e a seleção da semana agora atualizam sozinhos a cada partida computada!"
+                        "• **Legenda no Ranking:** Adicionada legenda explicativa detalhada no painel de estatísticas da semana!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -138,7 +138,7 @@ async def on_raw_reaction_add(payload):
             except Exception as e:
                 print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
-# --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING ---
+# --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING COM LEGENDA ---
 async def atualizar_canal_ranking():
     global estatisticas_cla
     estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
@@ -168,7 +168,7 @@ async def atualizar_canal_ranking():
         posicoes_dict_ranking = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
 
         for nome, pos, media, dados_pos in ranking_expandido:
-            linha_txt = f"• **{nome}** (`{pos}`) — Média: **{media:.2f}** | ⚽ {dados_pos.get('gols', 0)} | 🎯 {dados_pos.get('assistencias', 0)} | 🎮 {dados_pos.get('partidas', 0)}"
+            linha_txt = f"• **{nome}** (`{pos}`) — ⭐ **{media:.2f}** | ⚽ `{dados_pos.get('gols', 0)}` | 🎯 `{dados_pos.get('assistencias', 0)}` | 🎮 `{dados_pos.get('partidas', 0)}`"
             
             if pos in ["ATD", "ATE", "ATA"]:
                 cat = "ATAQUE"
@@ -193,7 +193,11 @@ async def atualizar_canal_ranking():
             title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
             description=(
                 f"Partidas computadas no total: `{estatisticas_cla.get('partidas_totais', 0)}`\n\n"
-                "📌 **Legenda:** ⚽ Gols | 🎯 Assistências | ⭐ Média | 🎮 Partidas\n"
+                "📖 **LEGENDA DE ESTATÍSTICAS:**\n"
+                "> ⭐ **Média:** Média de notas obtidas nas partidas\n"
+                "> ⚽ **Gols:** Total de gols marcados\n"
+                "> 🎯 **Assistências:** Total de passes para gol\n"
+                "> 🎮 **Partidas:** Total de jogos disputados na posição\n"
                 "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
             ),
             color=discord.Color.gold()
@@ -238,7 +242,6 @@ async def on_message(message):
     if message.channel.id == CANAL_DADOS_FECHADO_ID:
         conteudo = message.content.strip()
 
-        # Comando manual para fechar a semana e resetar
         if conteudo.lower() == "!relatoriodasemana":
             jogadores = estatisticas_cla.get("jogadores", {})
             if not jogadores:
@@ -270,7 +273,7 @@ async def on_message(message):
             if canal_ranking:
                 embed_rel = discord.Embed(
                     title="🎉 PREMIAÇÃO — SELEÇÃO DA SEMANA ROIPIAU FC 🏆",
-                    description="Parabéns aos craques que dominaram as partidas e foram os melhores de suas posições nesta semana! 🌟\n\u200b",
+                    description="Parabéns aos craques que dominaram as partidas e foram elogiados em suas posições! 🌟\n\u200b",
                     color=discord.Color.brand_green()
                 )
 
@@ -295,9 +298,8 @@ async def on_message(message):
             await message.channel.send("🏆 **Relatório final gerado com sucesso!** O banco de dados estatístico foi zerado e está pronto para um novo ciclo.", delete_after=15)
             return
 
-        # Processamento automático de linhas de partidas
         linhas = conteudo.split("\n")
-        jogadores_processados = 0
+        jogadores_processados = []
         erros_linhas = []
 
         for linha in linhas:
@@ -337,24 +339,26 @@ async def on_message(message):
                     pos_Atual["assistencias"] += assistencias
                     pos_Atual["soma_notas"] += nota
 
-                    jogadores_processados += 1
+                    jogadores_processados.append((nome, posicao, gols, assistencias, nota))
                 except Exception:
                     erros_linhas.append(linha)
             else:
                 if not linha.startswith("!"):
                     erros_linhas.append(linha)
 
-        if jogadores_processados > 0:
+        if jogadores_processados:
             estatisticas_cla["partidas_totais"] += 1
             salvar_estats()
 
             canal_res = bot.get_channel(CANAL_RESULTADOS_ID)
             if canal_res:
                 embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
-                embed_res.add_field(name="Status", value=f"Partida computada com sucesso! `{jogadores_processados}` jogadores registrados.", inline=False)
+                resumo_txt = []
+                for jp in jogadores_processados:
+                    resumo_txt.append(f"• **{jp[0]}** (`{jp[1]}`) — ⭐ {jp[4]} | ⚽ {jp[2]} | 🎯 {jp[3]}")
+                embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
                 await canal_res.send(embed=embed_res)
 
-            # Atualiza o ranking automaticamente na hora
             await atualizar_canal_ranking()
             await message.add_reaction("✅")
             return
