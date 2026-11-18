@@ -7,13 +7,15 @@ from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord.ext import commands
+import psycopg2
+from urllib.parse import urlparse
 
 # --- SERVIDOR WEB PARA O RENDER (MANTÉM O APP VIVO) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Roipau esta rodando!")
+        self.wfile.write(b"Bot Roipau esta rodando com Banco na Nuvem!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -23,66 +25,96 @@ def run_web_server():
 
 Thread(target=run_web_server, daemon=False).start()
 
+# --- CONFIGURAÇÃO DO BANCO DE DADOS POSTGRESQL (NUVEM) ---
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def conectar_db():
+    if not DATABASE_URL:
+        return None
+    url = urlparse(DATABASE_URL)
+    return psycopg2.connect(
+        database=url.path[1:],
+        user=url.username,
+        password=url.password,
+        host=url.hostname,
+        port=url.port
+    )
+
+def inicializar_tabelas():
+    conn = conectar_db()
+    if not conn:
+        print("⚠️ Aviso: DATABASE_URL não configurada! O bot usará armazenamento local temporário.")
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS dados_bot (
+                chave VARCHAR(50) PRIMARY KEY,
+                conteudo TEXT
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Tabelas do banco de dados na nuvem inicializadas com sucesso!")
+    except Exception as e:
+        print(f"⚠️ Erro ao inicializar tabelas no banco: {e}")
+
+inicializar_tabelas()
+
+def carregar_do_db(chave, padrao):
+    conn = conectar_db()
+    if not conn:
+        return padrao
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT conteudo FROM dados_bot WHERE chave = %s;", (chave,))
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        if res:
+            return json.loads(res[0])
+    except Exception as e:
+        print(f"⚠️ Erro ao carregar {chave} do banco: {e}")
+    return padrao
+
+def salvar_no_db(chave, dados):
+    conn = conectar_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO dados_bot (chave, conteudo) VALUES (%s, %s)
+            ON CONFLICT (chave) DO UPDATE SET conteudo = EXCLUDED.conteudo;
+        """, (chave, json.dumps(dados, ensure_ascii=False)))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Erro ao salvar {chave} no banco: {e}")
+
+# Carregando dados da nuvem
+listas_ativas = carregar_db_formatado() # função auxiliar abaixo
+def carregar_dados_iniciais():
+    raw_listas = carregar_do_db("listas_ativas", {})
+    return {int(k) if str(k).isdigit() else k: v for k, v in raw_listas.items()}
+
+listas_ativas = carregar_dados_iniciais()
+estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+
+def salvar_listas():
+    salvar_no_db("listas_ativas", {str(k): v for k, v in listas_ativas.items()})
+
+def salvar_estats():
+    salvar_no_db("estatisticas_cla", estatisticas_cla)
+
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-# --- PERSISTÊNCIA DE DADOS EM ARQUIVO JSON (BLINDADA) ---
-ARQUIVO_DADOS = "listas_ativas.json"
-ARQUIVO_ESTATS = "estatisticas_cla.json"
-
-def carregar_json(arquivo, padrao):
-    if os.path.exists(arquivo):
-        try:
-            with open(arquivo, "r", encoding="utf-8") as f:
-                dados_brutos = json.load(f)
-                if arquivo == ARQUIVO_DADOS:
-                    return {int(k) if str(k).isdigit() else k: v for k, v in dados_brutos.items()}
-                elif arquivo == ARQUIVO_ESTATS:
-                    if not isinstance(dados_brutos, dict):
-                        return padrao
-                    if "jogadores" not in dados_brutos:
-                        dados_brutos["jogadores"] = {}
-                    if "partidas_totais" not in dados_brutos:
-                        dados_brutos["partidas_totais"] = 0
-                    
-                    for nome, info in list(dados_brutos["jogadores"].items()):
-                        if "posicoes" not in info:
-                            pos_antiga = info.get("posicao", "MEI")
-                            info["posicoes"] = {
-                                pos_antiga: {
-                                    "partidas": info.get("partidas", 0),
-                                    "gols": info.get("gols", 0),
-                                    "assistencias": info.get("assistencias", 0),
-                                    "soma_notas": info.get("soma_notas", 0.0)
-                                }
-                            }
-                    return dados_brutos
-                return dados_brutos
-        except Exception as e:
-            print(f"⚠️ Erro ao carregar {arquivo}: {e}")
-    return padrao
-
-def salvar_json(arquivo, dados):
-    try:
-        with open(arquivo, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"⚠️ Erro ao salvar {arquivo}: {e}")
-
-listas_ativas = carregar_json(ARQUIVO_DADOS, {})
-listas_ativas = {int(k): v for k, v in listas_ativas.items() if str(k).isdigit() or isinstance(k, int)}
-
-estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
-
-def salvar_listas():
-    salvar_json(ARQUIVO_DADOS, {str(k): v for k, v in listas_ativas.items()})
-
-def salvar_estats():
-    salvar_json(ARQUIVO_ESTATS, estatisticas_cla)
 
 # --- IDs DOS CANAIS OFICIAIS ---
 CANAL_AVISO_ID = 1570420721312866436
@@ -91,7 +123,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.96-SuporteTotalATE_ATD"
+VERSAO_ATUAL = "v3.97-CloudPostgreSQL"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -111,14 +143,14 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Posição ATE Corrigida:** Adicionado suporte total para a posição `ATE` no ataque!"
+                        "• **Banco de Dados na Nuvem:** Estatísticas e listas migradas para o PostgreSQL. Seus dados agora estão blindados contra reboots!"
                     )
                     await channel.send(changelog_msg)
                     
                     with open(ARQUIVO_VERSAO, "w") as f:
                         f.write(VERSAO_ATUAL)
                 else:
-                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando normalmente! ⚽🔥")
+                    await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando com banco na nuvem! ⚽🔥")
                     
             except Exception as e:
                 print(f"Erro ao enviar mensagem de aviso no canal: {e}")
@@ -141,7 +173,7 @@ async def on_raw_reaction_add(payload):
 # --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING ---
 async def atualizar_canal_ranking():
     global estatisticas_cla
-    estatisticas_cla = carregar_json(ARQUIVO_ESTATS, {"jogadores": {}, "partidas_totais": 0})
+    estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
     
     try:
         canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
@@ -244,6 +276,8 @@ async def on_message(message):
         conteudo = message.content.strip()
 
         if conteudo.lower() == "!relatoriodasemana":
+            global estatisticas_cla
+            estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
             jogadores = estatisticas_cla.get("jogadores", {})
             if not jogadores:
                 await message.channel.send("⚠️ Não há dados estatísticos registrados para gerar o relatório!", delete_after=10)
@@ -303,6 +337,8 @@ async def on_message(message):
         jogadores_processados = []
         erros_linhas = []
 
+        estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+
         for linha in linhas:
             if not linha.strip():
                 continue
@@ -312,7 +348,6 @@ async def on_message(message):
                     nome = partes[0]
                     posicao = partes[1].upper()
                     
-                    # Validação estrita de posições aceitas para evitar falhas silenciosas
                     posicoes_validas = ["ATD", "ATE", "ATA", "GL", "GOL", "ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD", "VOL", "MEI", "ME", "MD", "ALA"]
                     if posicao not in posicoes_validas:
                         erros_linhas.append(f"{linha} (Posição '{posicao}' inválida)")
@@ -331,9 +366,9 @@ async def on_message(message):
                         jogadores[nome]["posicoes"] = {
                             pos_antiga: {
                                 "partidas": jogadores[nome].get("partidas", 0),
-                                "gols": jogodores[nome].get("gols", 0) if "jogadores" in locals() else 0,
-                                "assistencias": jogadores[nome].get("assistencias", 0),
-                                "soma_notas": jogadores[nome].get("soma_notas", 0.0)
+                                "gols": 0,
+                                "assistencias": 0,
+                                "soma_notas": 0.0
                             }
                         }
 
@@ -384,6 +419,7 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+# [As demais funções de listas, formações e comandos continuam idênticas abaixo...]
 FORMAGOES = {
     "352":  {"GOL": 1, "ZAG": 3, "VOL": 2, "ALA": 2, "MEI": 1, "ATA": 2},
     "433":  {"GOL": 1, "LAT": 2, "ZAG": 2, "VOL": 1, "MEI": 2, "ATA": 3},
@@ -500,6 +536,8 @@ class ListaButtonsDinamica(discord.ui.View):
                 count_in_row = 0
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        global listas_ativas
+        listas_ativas = carregar_dados_iniciais()
         msg_id = interaction.message.id
         if msg_id not in listas_ativas:
             await interaction.response.send_message("⚠️ Esta lista expirou na memória do bot. Crie uma nova com !criarlista.", ephemeral=True)
@@ -670,6 +708,8 @@ async def listas_ativas_cmd(ctx):
     except Exception:
         pass
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     abertas = {mid: dados for mid, dados in listas_ativas.items() if not dados["fechada"]}
 
     if not abertas:
@@ -709,6 +749,8 @@ async def reabrir_lista(ctx):
     except Exception:
         pass
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     msg_id_alvo = None
     dados_alvo = None
     for mid, dados in reversed(list(listas_ativas.items())):
@@ -757,6 +799,8 @@ async def limpar_mortas(ctx):
     except Exception:
         pass
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     removidas = 0
     ids_para_remover = []
 
@@ -796,13 +840,14 @@ async def teste(ctx):
         pass
 
     ping_ms = round(bot.latency * 1000)
+    est_db = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
     
     feedback_msg = (
-        "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU** ⚽\n\n"
-        f"🟢 **Status da Conexão:** Online e Operacional\n"
+        "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU (NUVEM)** ⚽\n\n"
+        f"🟢 **Status da Conexão:** Online e Operacional (PostgreSQL)\n"
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
-        f"📊 **Partidas Registradas no Banco:** `{estatisticas_cla.get('partidas_totais', 0)}`\n"
+        f"📊 **Partidas Registradas no Banco (Nuvem):** `{est_db.get('partidas_totais', 0)}`\n"
         f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
     )
     
@@ -822,13 +867,15 @@ async def criar_lista(ctx, *, args):
         titulares = []
         reservas = []
         capitaes = {0: None, 1: None, 2: None, 3: None}
-        qtd_times_ativos = 2  # Começa sempre com 2 times ativos
+        qtd_times_ativos = 2
 
         view = ListaButtonsDinamica(esquema, qtd_times=qtd_times_ativos)
         embed = gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos)
         
         msg = await ctx.send(content="@everyone", embed=embed, view=view)
 
+        global listas_ativas
+        listas_ativas = carregar_dados_iniciais()
         listas_ativas[msg.id] = {
             "titulo": titulo,
             "esquema": esquema,
@@ -852,6 +899,8 @@ async def limpar(ctx):
     except Exception:
         pass
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     msg_id = None
     if ctx.message.reference:
         msg_id = ctx.message.reference.message_id
@@ -895,6 +944,8 @@ async def simular(ctx, quantidade: int):
     except Exception:
         pass
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     msg_id = None
     if ctx.message.reference:
         msg_id = ctx.message.reference.message_id
@@ -968,6 +1019,8 @@ async def addtime(ctx, numero_time: int):
         await ctx.send("⚠️ Você só pode adicionar o `3` ou o `4` time!", delete_after=10)
         return
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     msg_id = None
     if ctx.message.reference:
         msg_id = ctx.message.reference.message_id
@@ -1039,6 +1092,8 @@ async def remover(ctx, member: discord.Member = None):
         await ctx.send("⚠️ **Uso correto:** Digite `!remover @Jogador`")
         return
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     msg_id = None
     if ctx.message.reference:
         msg_id = ctx.message.reference.message_id
@@ -1099,6 +1154,8 @@ async def fechar_lista(ctx):
     except Exception:
         pass
 
+    global listas_ativas
+    listas_ativas = carregar_dados_iniciais()
     msg_id = None
     if ctx.message.reference:
         msg_id = ctx.message.reference.message_id
@@ -1248,6 +1305,11 @@ async def fechar_lista(ctx):
 
     except Exception as e:
         await ctx.send(f"⚠️ Erro ao fechar lista: {e}")
+
+# Função auxiliar para carregar listas formatadas
+def carregar_db_formatado():
+    raw_listas = carregar_do_db("listas_ativas", {})
+    return {int(k) if str(k).isdigit() else k: v for k, v in raw_listas.items()}
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
