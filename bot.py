@@ -129,7 +129,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v3.99-CloudPostgresFix"
+VERSAO_ATUAL = "v4.0-NovasPosicoesMCE_MCD"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 @bot.event
@@ -149,7 +149,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Correção na Nuvem:** Erro de inicialização resolvido. Bot totalmente integrado ao PostgreSQL!"
+                        "• **Suporte a Novas Posições:** Adicionado suporte total para `MCE` e `MCD` no meio-campo!"
                     )
                     await channel.send(changelog_msg)
                     
@@ -354,7 +354,7 @@ async def on_message(message):
                     nome = partes[0]
                     posicao = partes[1].upper()
                     
-                    posicoes_validas = ["ATD", "ATE", "ATA", "GL", "GOL", "ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD", "VOL", "MEI", "ME", "MD", "ALA"]
+                    posicoes_validas = ["ATD", "ATE", "ATA", "GL", "GOL", "ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD", "VOL", "MEI", "ME", "MD", "ALA", "MCE", "MCD"]
                     if posicao not in posicoes_validas:
                         erros_linhas.append(f"{linha} (Posição '{posicao}' inválida)")
                         continue
