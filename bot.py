@@ -132,7 +132,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v4.5-RankingAuto"
+VERSAO_ATUAL = "v4.6-RankingConsolidado"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 async def obter_canal(canal_id):
@@ -145,36 +145,103 @@ async def obter_canal(canal_id):
         print(f"⚠️ Não foi possível obter o canal {canal_id}: {e}")
         return None
 
+def setor_da_posicao(pos):
+    pos = pos.upper()
+    if pos in ["ATD", "ATE", "ATA"]:
+        return "ATAQUE"
+    if pos in ["GL", "GOL"]:
+        return "GOLEIRO"
+    if pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
+        return "DEFESA"
+    return "MEIO"
+
+def consolidar_jogadores(jogadores):
+    """Unifica jogadores por nome (ignorando maiúsculas/minúsculas e espaços extras)."""
+    consolidados = {}
+    for nome_bruto, info in jogadores.items():
+        chave = nome_bruto.strip().lower()
+        if not chave:
+            continue
+
+        if chave not in consolidados:
+            consolidados[chave] = {
+                "nome": nome_bruto.strip(),
+                "posicoes": {}
+            }
+        else:
+            # Prefere a grafia com letras maiúsculas se existir (ex: 'Lobo' em vez de 'lobo')
+            if any(c.isupper() for c in nome_bruto) and not any(c.isupper() for c in consolidados[chave]["nome"]):
+                consolidados[chave]["nome"] = nome_bruto.strip()
+
+        pos_map = info.get("posicoes", {})
+        if not pos_map and "partidas" in info:
+            pos_antiga = info.get("posicao", "MEI").upper()
+            pos_map = {
+                pos_antiga: {
+                    "partidas": info.get("partidas", 0),
+                    "gols": info.get("gols", 0),
+                    "assistencias": info.get("assistencias", 0),
+                    "soma_notas": info.get("soma_notas", 0.0)
+                }
+            }
+
+        for pos, dados_pos in pos_map.items():
+            pos_u = pos.upper()
+            destino = consolidados[chave]["posicoes"].setdefault(
+                pos_u,
+                {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
+            )
+            destino["partidas"] += dados_pos.get("partidas", 0)
+            destino["gols"] += dados_pos.get("gols", 0)
+            destino["assistencias"] += dados_pos.get("assistencias", 0)
+            destino["soma_notas"] += dados_pos.get("soma_notas", 0.0)
+
+    return consolidados
+
 def calcular_selecao_semana(jogadores):
     melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
-    notas_melhores = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
+    notas_melhores = {"ATAQUE": -1.0, "MEIO": -1.0, "DEFESA": -1.0, "GOLEIRO": -1.0}
 
-    for nome, info in jogadores.items():
-        posicoes_jogador = info.get("posicoes", {})
-        for pos, dados_pos in posicoes_jogador.items():
+    consolidados = consolidar_jogadores(jogadores)
+
+    for _, info in consolidados.items():
+        nome = info["nome"]
+        setores = {}
+
+        for pos, dados_pos in info.get("posicoes", {}).items():
             partidas = dados_pos.get("partidas", 0)
             if partidas <= 0:
                 continue
-            media = dados_pos.get("soma_notas", 0.0) / partidas
+            cat = setor_da_posicao(pos)
+            st = setores.setdefault(cat, {
+                "partidas": 0,
+                "gols": 0,
+                "assistencias": 0,
+                "soma_notas": 0.0,
+                "pos_principal": pos,
+                "max_partidas_pos": -1
+            })
+            st["partidas"] += partidas
+            st["gols"] += dados_pos.get("gols", 0)
+            st["assistencias"] += dados_pos.get("assistencias", 0)
+            st["soma_notas"] += dados_pos.get("soma_notas", 0.0)
+            if partidas > st["max_partidas_pos"]:
+                st["max_partidas_pos"] = partidas
+                st["pos_principal"] = pos
 
-            if pos in ["ATD", "ATE", "ATA"]:
-                cat = "ATAQUE"
-            elif pos in ["GL", "GOL"]:
-                cat = "GOLEIRO"
-            elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
-                cat = "DEFESA"
-            else:
-                cat = "MEIO"
-
+        for cat, st in setores.items():
+            if st["partidas"] <= 0:
+                continue
+            media = st["soma_notas"] / st["partidas"]
             if media > notas_melhores[cat]:
                 notas_melhores[cat] = media
                 melhores[cat] = (
                     nome,
-                    pos,
+                    st["pos_principal"],
                     media,
-                    dados_pos.get("gols", 0),
-                    dados_pos.get("assistencias", 0),
-                    partidas
+                    st["gols"],
+                    st["assistencias"],
+                    st["partidas"]
                 )
 
     return melhores
@@ -211,15 +278,34 @@ async def enviar_ranking_atualizado(canal_fallback=None):
         print("⚠️ Canal de ranking não encontrado para envio.")
         return False
 
+    consolidados = consolidar_jogadores(jogadores)
     linhas_rank = []
-    for nome, info in jogadores.items():
+
+    for _, info in consolidados.items():
+        nome = info["nome"]
+        total_partidas = 0
+        total_gols = 0
+        total_assists = 0
+        total_notas = 0.0
+        posicoes_ordenadas = []
+
         for pos, d in info.get("posicoes", {}).items():
-            partidas = d.get("partidas", 0)
-            if partidas > 0:
-                media = d.get("soma_notas", 0.0) / partidas
-                linhas_rank.append(
-                    (media, f"• **{nome}** (`{pos}`) — ⭐ **{media:.2f}** | ⚽ `{d.get('gols', 0)}` | 🎯 `{d.get('assistencias', 0)}` | 🎮 `{partidas}`")
-                )
+            part = d.get("partidas", 0)
+            if part > 0:
+                total_partidas += part
+                total_gols += d.get("gols", 0)
+                total_assists += d.get("assistencias", 0)
+                total_notas += d.get("soma_notas", 0.0)
+                posicoes_ordenadas.append((part, pos))
+
+        if total_partidas > 0:
+            media = total_notas / total_partidas
+            posicoes_ordenadas.sort(key=lambda x: x[0], reverse=True)
+            pos_label = "/".join([p[1] for p in posicoes_ordenadas[:3]])
+            linhas_rank.append((
+                (media, total_gols, total_assists),
+                f"• **{nome}** (`{pos_label}`) — ⭐ **{media:.2f}** | ⚽ `{total_gols}` | 🎯 `{total_assists}` | 🎮 `{total_partidas}`"
+            ))
 
     linhas_rank.sort(key=lambda x: x[0], reverse=True)
     textos_linhas = [item[1] for item in linhas_rank]
@@ -290,7 +376,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Ranking Automático:** Atualiza sozinho no canal de melhores da semana toda vez que uma partida é enviada, além de funcionar via `!ranking`."
+                        "• **Ranking Unificado por Jogador:** Todos os jogos, gols, assistências e notas de cada jogador agora somam em uma única linha no ranking e por setor na Seleção da Semana."
                     )
                     await channel.send(changelog_msg)
 
@@ -378,7 +464,7 @@ async def on_message(message):
             partes = [p.strip() for p in linha.split("|")]
             if len(partes) >= 5:
                 try:
-                    nome = partes[0]
+                    nome_digitado = partes[0].strip()
                     posicao = partes[1].upper()
 
                     posicoes_validas = ["ATD", "ATE", "ATA", "GL", "GOL", "ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD", "VOL", "MEI", "ME", "MD", "ALA", "MCE", "MCD"]
@@ -391,21 +477,30 @@ async def on_message(message):
                     nota = float(partes[4].replace(",", "."))
 
                     jogadores = estatisticas_cla.setdefault("jogadores", {})
-                    if nome not in jogadores:
-                        jogadores[nome] = {"posicoes": {}}
 
-                    if "posicoes" not in jogadores[nome]:
-                        pos_antiga = jogadores[nome].get("posicao", "MEI")
-                        jogadores[nome]["posicoes"] = {
+                    # Busca jogador existente ignorando maiúsculas/minúsculas
+                    chave_existente = None
+                    for k in jogadores.keys():
+                        if k.strip().lower() == nome_digitado.lower():
+                            chave_existente = k
+                            break
+
+                    nome_chave = chave_existente if chave_existente else nome_digitado
+                    if nome_chave not in jogadores:
+                        jogadores[nome_chave] = {"posicoes": {}}
+
+                    if "posicoes" not in jogadores[nome_chave]:
+                        pos_antiga = jogadores[nome_chave].get("posicao", "MEI")
+                        jogadores[nome_chave]["posicoes"] = {
                             pos_antiga: {
-                                "partidas": jogadores[nome].get("partidas", 0),
-                                "gols": 0,
-                                "assistencias": 0,
-                                "soma_notas": 0.0
+                                "partidas": jogadores[nome_chave].get("partidas", 0),
+                                "gols": jogadores[nome_chave].get("gols", 0),
+                                "assistencias": jogadores[nome_chave].get("assistencias", 0),
+                                "soma_notas": jogadores[nome_chave].get("soma_notas", 0.0)
                             }
                         }
 
-                    posicoes_dict = jogadores[nome]["posicoes"]
+                    posicoes_dict = jogadores[nome_chave]["posicoes"]
                     if posicao not in posicoes_dict:
                         posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
 
@@ -415,7 +510,7 @@ async def on_message(message):
                     pos_Atual["assistencias"] += assistencias
                     pos_Atual["soma_notas"] += nota
 
-                    jogadores_processados.append((nome, posicao, gols, assistencias, nota))
+                    jogadores_processados.append((nome_chave, posicao, gols, assistencias, nota))
                 except Exception:
                     erros_linhas.append(linha)
             else:
