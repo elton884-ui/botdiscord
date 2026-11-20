@@ -129,8 +129,42 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v4.3-RankingInstantaneo"
+VERSAO_ATUAL = "v4.4-RankingComDestaques"
 ARQUIVO_VERSAO = "ultima_versao.txt"
+
+def calcular_selecao_semana(jogadores):
+    melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
+    notas_melhores = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
+
+    for nome, info in jogadores.items():
+        posicoes_jogador = info.get("posicoes", {})
+        for pos, dados_pos in posicoes_jogador.items():
+            partidas = dados_pos.get("partidas", 0)
+            if partidas <= 0:
+                continue
+            media = dados_pos.get("soma_notas", 0.0) / partidas
+
+            if pos in ["ATD", "ATE", "ATA"]:
+                cat = "ATAQUE"
+            elif pos in ["GL", "GOL"]:
+                cat = "GOLEIRO"
+            elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
+                cat = "DEFESA"
+            else:
+                cat = "MEIO"
+
+            if media > notas_melhores[cat]:
+                notas_melhores[cat] = media
+                melhores[cat] = (
+                    nome,
+                    pos,
+                    media,
+                    dados_pos.get("gols", 0),
+                    dados_pos.get("assistencias", 0),
+                    partidas
+                )
+
+    return melhores
 
 @bot.event
 async def on_ready():
@@ -149,7 +183,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Comando !ranking:** Publica o ranking atualizado com os dados salvos no banco."
+                        "• **!ranking:** Agora inclui automaticamente a **Seleção da Semana (Destaques)** junto ao ranking atualizado sem zerar os dados."
                     )
                     await channel.send(changelog_msg)
 
@@ -193,26 +227,7 @@ async def on_message(message):
                 await message.channel.send("⚠️ Não há dados estatísticos registrados para gerar o relatório!", delete_after=10)
                 return
 
-            melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
-            notas_melhores = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
-
-            for nome, info in jogadores.items():
-                posicoes_jogador = info.get("posicoes", {})
-                for pos, dados_pos in posicoes_jogador.items():
-                    media = dados_pos["soma_notas"] / dados_pos["partidas"] if dados_pos["partidas"] > 0 else 0
-
-                    if pos in ["ATD", "ATE", "ATA"]:
-                        cat = "ATAQUE"
-                    elif pos in ["GL", "GOL"]:
-                        cat = "GOLEIRO"
-                    elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
-                        cat = "DEFESA"
-                    else:
-                        cat = "MEIO"
-
-                    if media > notas_melhores[cat]:
-                        notas_melhores[cat] = media
-                        melhores[cat] = (nome, pos, media, dados_pos['gols'], dados_pos['assistencias'], dados_pos['partidas'])
+            melhores = calcular_selecao_semana(jogadores)
 
             canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
             if canal_ranking:
@@ -583,7 +598,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
-            "`!ranking`\n> Publica o ranking atualizado com os dados salvos no banco no canal de melhores da semana.\n"
+            "`!ranking`\n> Publica o ranking atualizado e a Seleção da Semana no canal de melhores da semana.\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
@@ -796,15 +811,32 @@ async def ranking_cmd(ctx):
 
     linhas_rank.sort(key=lambda x: x[0], reverse=True)
 
+    melhores = calcular_selecao_semana(jogadores)
+    emojis_cat = {"ATAQUE": "🎯", "MEIO": "⚙️", "DEFESA": "🛡️", "GOLEIRO": "🧤"}
+    linhas_destaques = []
+    for cat in ["ATAQUE", "MEIO", "DEFESA", "GOLEIRO"]:
+        dados_craque = melhores.get(cat)
+        if dados_craque:
+            nome, pos, media, gols, assists, part = dados_craque
+            linhas_destaques.append(
+                f"• {emojis_cat[cat]} **{cat.capitalize()}:** **{nome}** (`{pos}`) — ⭐ **{media:.2f}** | ⚽ `{gols}` | 🎯 `{assists}` | 🎮 `{part}`"
+            )
+
     embed = discord.Embed(
         title="🏆 RANKING DA SEMANA — ROIPIAU FC",
         description=f"Partidas computadas: `{dados_est.get('partidas_totais', 0)}`\n\n" + "\n".join([item[1] for item in linhas_rank]),
         color=discord.Color.gold()
     )
+    if linhas_destaques:
+        embed.add_field(
+            name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)",
+            value="\n".join(linhas_destaques),
+            inline=False
+        )
     embed.set_footer(text="RoiPau FC Bot • Atualizado via !ranking ⚽🔥")
 
     await canal_destino.send(embed=embed)
-    await ctx.send("✅ Ranking enviado com sucesso!", delete_after=8)
+    await ctx.send("✅ Ranking e Seleção da Semana enviados com sucesso!", delete_after=8)
 
 @bot.command(name="criarlista")
 async def criar_lista(ctx, *, args):
