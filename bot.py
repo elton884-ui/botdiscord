@@ -17,9 +17,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot Roipau esta rodando com Banco na Nuvem!")
 
-    def do_HEAD(self):
-        self.do_GET()
-
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
@@ -132,128 +129,15 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v4.3.1-RankingFetch"
+VERSAO_ATUAL = "v4.3-RankingInstantaneo"
 ARQUIVO_VERSAO = "ultima_versao.txt"
-
-async def obter_canal(canal_id):
-    canal = bot.get_channel(canal_id)
-    if canal:
-        return canal
-    try:
-        return await bot.fetch_channel(canal_id)
-    except Exception as e:
-        print(f"⚠️ Não foi possível obter o canal {canal_id}: {e}")
-        return None
-
-# --- FUNÇÃO DE ATUALIZAÇÃO AUTOMÁTICA DO RANKING ---
-async def atualizar_canal_ranking():
-    global estatisticas_cla
-    estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
-
-    try:
-        canal_ranking = await obter_canal(CANAL_MELHORES_SEMANA_ID)
-        if not canal_ranking:
-            print("⚠️ Canal de melhores da semana não encontrado!")
-            return False
-
-        jogadores = estatisticas_cla.get("jogadores", {})
-        if not jogadores:
-            print("⚠️ Sem jogadores no banco para atualizar o ranking.")
-            return False
-
-        ranking_expandido = []
-        for nome, info in jogadores.items():
-            posicoes_dict = info.get("posicoes", {})
-            for pos, dados_pos in posicoes_dict.items():
-                partes_partidas = dados_pos.get("partidas", 0)
-                if partes_partidas > 0:
-                    media = dados_pos.get("soma_notas", 0.0) / partes_partidas
-                    ranking_expandido.append((nome, pos, media, dados_pos))
-
-        melhores_semana = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
-        notas_melhores_semana = {"ATAQUE": -1, "MEIO": -1, "DEFESA": -1, "GOLEIRO": -1}
-
-        posicoes_dict_ranking = {"ATAQUE": [], "MEIO": [], "DEFESA": [], "GOLEIRO": []}
-
-        for nome, pos, media, dados_pos in ranking_expandido:
-            linha_txt = f"• **{nome}** (`{pos}`) — ⭐ **{media:.2f}** | ⚽ `{dados_pos.get('gols', 0)}` | 🎯 `{dados_pos.get('assistencias', 0)}` | 🎮 `{dados_pos.get('partidas', 0)}`"
-
-            if pos in ["ATD", "ATE", "ATA"]:
-                cat = "ATAQUE"
-            elif pos in ["GL", "GOL"]:
-                cat = "GOLEIRO"
-            elif pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
-                cat = "DEFESA"
-            else:
-                cat = "MEIO"
-
-            posicoes_dict_ranking[cat].append((media, linha_txt))
-
-            if media > notas_melhores_semana[cat]:
-                notas_melhores_semana[cat] = media
-                melhores_semana[cat] = (nome, pos, media)
-
-        for cat in posicoes_dict_ranking:
-            posicoes_dict_ranking[cat].sort(key=lambda x: x[0], reverse=True)
-            posicoes_dict_ranking[cat] = [item[1] for item in posicoes_dict_ranking[cat]]
-
-        embed_rank = discord.Embed(
-            title="🏆 RANKING E SELEÇÃO DA SEMANA — ROIPIAU FC",
-            description=(
-                f"Partidas computadas no total: `{estatisticas_cla.get('partidas_totais', 0)}`\n\n"
-                "📖 **LEGENDA DE ESTATÍSTICAS:**\n"
-                "> ⭐ **Média:** Média de notas obtidas nas partidas\n"
-                "> ⚽ **Gols:** Total de gols marcados\n"
-                "> 🎯 **Assistências:** Total de passes para gol\n"
-                "> 🎮 **Partidas:** Total de jogos disputados na posição\n"
-                "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
-            ),
-            color=discord.Color.gold()
-        )
-
-        selecao_txt = []
-        emojis_sel = {"ATAQUE": "🎯 Ataque", "MEIO": "⚙️ Meio", "DEFESA": "🛡️ Defesa", "GOLEIRO": "🧤 Goleiro"}
-        for cat, dados_craque in melhores_semana.items():
-            if dados_craque:
-                nome_c, pos_c, med_c = dados_craque
-                selecao_txt.append(f"• **{emojis_sel[cat]}:** {nome_c} (`{pos_c}`) — ⭐ **{med_c:.2f}**")
-
-        if selecao_txt:
-            embed_rank.add_field(name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)", value="\n".join(selecao_txt), inline=False)
-            embed_rank.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
-
-        for cat, lista_jog in posicoes_dict_ranking.items():
-            if lista_jog:
-                embed_rank.add_field(name=f"📋 Categoria: {cat}", value="\n".join(lista_jog), inline=False)
-
-        embed_rank.set_footer(text="RoiPau FC Bot • O ranking atualiza automaticamente a cada partida! ⚽🔥")
-
-        nova_msg = await canal_ranking.send(embed=embed_rank)
-
-        try:
-            async for msg in canal_ranking.history(limit=15):
-                if msg.author.id == bot.user.id and msg.id != nova_msg.id:
-                    try:
-                        await msg.delete()
-                    except Exception:
-                        pass
-        except Exception as e:
-            print(f"⚠️ Aviso ao limpar histórico antigo do ranking: {e}")
-
-        print("✅ Ranking de melhores da semana atualizado com sucesso!")
-        return True
-    except Exception as e:
-        print(f"❌ Erro crítico ao atualizar canal de ranking: {e}")
-        return False
 
 @bot.event
 async def on_ready():
     print(f"Bot conectado como {bot.user}!")
 
-    await atualizar_canal_ranking()
-
     if CANAL_AVISO_ID:
-        channel = await obter_canal(CANAL_AVISO_ID)
+        channel = bot.get_channel(CANAL_AVISO_ID)
         if channel:
             try:
                 ultima_versao = ""
@@ -265,11 +149,11 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Atualização Instantânea:** Ajustado o gatilho de partidas para forçar a atualização imediata do ranking."
+                        "• **Comando !ranking:** Publica o ranking atualizado com os dados salvos no banco."
                     )
                     await channel.send(changelog_msg)
 
-                    with open(ARQUIVO_VERSAO, "w", encoding="utf-8") as f:
+                    with open(ARQUIVO_VERSAO, "w") as f:
                         f.write(VERSAO_ATUAL)
                 else:
                     await channel.send("🤖 **RoiPau FC Bot** reiniciado e operando perfeitamente! ⚽🔥")
@@ -285,11 +169,10 @@ async def on_raw_reaction_add(payload):
     if payload.channel_id == CANAL_AVISO_ID:
         if str(payload.emoji) == "✅":
             try:
-                channel = await obter_canal(payload.channel_id)
-                if channel:
-                    message = await channel.fetch_message(payload.message_id)
-                    if message.author.id == bot.user.id:
-                        await message.delete()
+                channel = bot.get_channel(payload.channel_id)
+                message = await channel.fetch_message(payload.message_id)
+                if message.author.id == bot.user.id:
+                    await message.delete()
             except Exception as e:
                 print(f"Erro ao tentar apagar mensagem via reação: {e}")
 
@@ -331,7 +214,7 @@ async def on_message(message):
                         notas_melhores[cat] = media
                         melhores[cat] = (nome, pos, media, dados_pos['gols'], dados_pos['assistencias'], dados_pos['partidas'])
 
-            canal_ranking = await obter_canal(CANAL_MELHORES_SEMANA_ID)
+            canal_ranking = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
             if canal_ranking:
                 embed_rel = discord.Embed(
                     title="🎉 PREMIAÇÃO — SELEÇÃO DA SEMANA ROIPIAU FC 🏆",
@@ -429,7 +312,7 @@ async def on_message(message):
             estatisticas_cla["partidas_totais"] += 1
             salvar_estats()
 
-            canal_res = await obter_canal(CANAL_RESULTADOS_ID)
+            canal_res = bot.get_channel(CANAL_RESULTADOS_ID)
             if canal_res:
                 embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
                 resumo_txt = []
@@ -438,7 +321,6 @@ async def on_message(message):
                 embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
                 await canal_res.send(embed=embed_res)
 
-            await atualizar_canal_ranking()
             await message.add_reaction("✅")
             return
         else:
@@ -701,6 +583,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
+            "`!ranking`\n> Publica o ranking atualizado com os dados salvos no banco no canal de melhores da semana.\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
@@ -750,7 +633,7 @@ async def listas_ativas_cmd(ctx):
     )
 
     for mid, dados in abertas.items():
-        canal = await obter_canal(dados["channel_id"])
+        canal = bot.get_channel(dados["channel_id"])
         nome_canal = f"<#{dados['channel_id']}>" if canal else "Canal desconhecido"
 
         info_txt = (
@@ -763,7 +646,7 @@ async def listas_ativas_cmd(ctx):
 
     embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
 
-    canal_aviso = await obter_canal(CANAL_AVISO_ID)
+    canal_aviso = bot.get_channel(CANAL_AVISO_ID)
     if canal_aviso:
         await canal_aviso.send(embed=embed)
     else:
@@ -794,7 +677,7 @@ async def reabrir_lista(ctx):
     nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
     dados_alvo["view"] = nova_view
 
-    channel = await obter_canal(dados_alvo["channel_id"])
+    channel = bot.get_channel(dados_alvo["channel_id"])
 
     try:
         msg = await channel.fetch_message(msg_id_alvo)
@@ -833,7 +716,7 @@ async def limpar_mortas(ctx):
 
     for mid, dados in list(listas_ativas.items()):
         canal_id = dados.get("channel_id")
-        canal = await obter_canal(canal_id)
+        canal = bot.get_channel(canal_id)
 
         if not canal:
             ids_para_remover.append(mid)
@@ -875,10 +758,53 @@ async def teste(ctx):
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"📊 **Partidas Registradas no Banco (Nuvem):** `{est_db.get('partidas_totais', 0)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!ranking`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
     )
 
     await ctx.send(feedback_msg, delete_after=15)
+
+@bot.command(name="ranking")
+async def ranking_cmd(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    dados_est = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+    jogadores = dados_est.get("jogadores", {})
+
+    if not jogadores:
+        await ctx.send("⚠️ Ainda não há estatísticas salvas no banco.", delete_after=10)
+        return
+
+    canal_destino = bot.get_channel(CANAL_MELHORES_SEMANA_ID)
+    if not canal_destino:
+        try:
+            canal_destino = await bot.fetch_channel(CANAL_MELHORES_SEMANA_ID)
+        except Exception:
+            canal_destino = ctx.channel
+
+    linhas_rank = []
+    for nome, info in jogadores.items():
+        for pos, d in info.get("posicoes", {}).items():
+            partidas = d.get("partidas", 0)
+            if partidas > 0:
+                media = d.get("soma_notas", 0.0) / partidas
+                linhas_rank.append(
+                    (media, f"• **{nome}** (`{pos}`) — ⭐ **{media:.2f}** | ⚽ `{d.get('gols', 0)}` | 🎯 `{d.get('assistencias', 0)}` | 🎮 `{partidas}`")
+                )
+
+    linhas_rank.sort(key=lambda x: x[0], reverse=True)
+
+    embed = discord.Embed(
+        title="🏆 RANKING DA SEMANA — ROIPIAU FC",
+        description=f"Partidas computadas: `{dados_est.get('partidas_totais', 0)}`\n\n" + "\n".join([item[1] for item in linhas_rank]),
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="RoiPau FC Bot • Atualizado via !ranking ⚽🔥")
+
+    await canal_destino.send(embed=embed)
+    await ctx.send("✅ Ranking enviado com sucesso!", delete_after=8)
 
 @bot.command(name="criarlista")
 async def criar_lista(ctx, *, args):
@@ -951,7 +877,7 @@ async def limpar(ctx):
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=2)
     dados["view"] = nova_view
 
-    channel = await obter_canal(dados["channel_id"])
+    channel = bot.get_channel(dados["channel_id"])
     try:
         msg = await channel.fetch_message(msg_id)
         novo_embed = gerar_embed_dinamico(
@@ -1022,7 +948,7 @@ async def simular(ctx, quantidade: int):
     dados["reservas"] = reservas
     salvar_listas()
 
-    channel = await obter_canal(dados["channel_id"])
+    channel = bot.get_channel(dados["channel_id"])
     try:
         msg = await channel.fetch_message(msg_id)
         novo_embed = gerar_embed_dinamico(
@@ -1090,7 +1016,7 @@ async def addtime(ctx, numero_time: int):
     dados["view"] = nova_view
     salvar_listas()
 
-    channel = await obter_canal(dados["channel_id"])
+    channel = bot.get_channel(dados["channel_id"])
     try:
         msg = await channel.fetch_message(msg_id)
         novo_embed = gerar_embed_dinamico(
@@ -1161,7 +1087,7 @@ async def remover(ctx, member: discord.Member = None):
     dados["capitaes"] = capitaes_dict
     salvar_listas()
 
-    channel = await obter_canal(dados["channel_id"])
+    channel = bot.get_channel(dados["channel_id"])
     try:
         msg = await channel.fetch_message(msg_id)
         novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"])
@@ -1270,7 +1196,7 @@ async def fechar_lista(ctx):
             else:
                 capitaes_atribuidos[i] = "*Nenhum*"
 
-    channel = await obter_canal(dados["channel_id"])
+    channel = bot.get_channel(dados["channel_id"])
     try:
         try:
             msg = await channel.fetch_message(msg_id)
@@ -1304,7 +1230,7 @@ async def fechar_lista(ctx):
         msg_escalacao_enviada = await ctx.send(mensagem_escalacao)
 
         relatorio_msg_enviada = None
-        canal_escalacao = await obter_canal(CANAL_ESCALACAO_ID)
+        canal_escalacao = bot.get_channel(CANAL_ESCALACAO_ID)
         if canal_escalacao:
             participantes_str = ", ".join(todos_participantes) if todos_participantes else "*Nenhum participante*"
             relatorio_msg = (
