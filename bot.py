@@ -132,13 +132,15 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v5.4-LegendaNoBloco1"
+VERSAO_ATUAL = "v5.5-LegendaTopoEVolantes"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
+ORDEM_CATEGORIAS_MELHORES = ["GOLEIRO", "ZAGUEIRO", "VOLANTE", "MEIA", "ATAQUE"]
 ROTULOS_MELHOR = {
     "GOLEIRO": "🧤 Melhor Goleiro",
-    "DEFESA": "🛡️ Melhor Zagueiro",
-    "MEIO": "⚙️ Melhor Meia",
+    "ZAGUEIRO": "🛡️ Melhor Zagueiro",
+    "VOLANTE": "🧱 Melhor Volante",
+    "MEIA": "⚙️ Melhor Meia",
     "ATAQUE": "🎯 Melhor Atacante",
 }
 
@@ -152,15 +154,17 @@ async def obter_canal(canal_id):
         print(f"⚠️ Não foi possível obter o canal {canal_id}: {e}")
         return None
 
-def setor_da_posicao(pos):
+def categoria_da_posicao(pos):
     pos = pos.upper()
     if pos in ["ATD", "ATE", "ATA"]:
         return "ATAQUE"
     if pos in ["GL", "GOL"]:
         return "GOLEIRO"
-    if pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD", "VLE", "VLD"]:
-        return "DEFESA"
-    return "MEIO"
+    if pos in ["VOL", "VLD", "VLE"]:
+        return "VOLANTE"
+    if pos in ["ZAG", "ZGE", "ZGD", "LAT", "LE", "LD"]:
+        return "ZAGUEIRO"
+    return "MEIA"
 
 def consolidar_jogadores(jogadores):
     """Unifica jogadores por nome (ignorando maiúsculas/minúsculas) mantendo notas por posição."""
@@ -205,14 +209,9 @@ def consolidar_jogadores(jogadores):
     return consolidados
 
 def calcular_selecao_semana(jogadores):
-    """Calcula o melhor jogador de cada posição/setor usando a média da posição."""
-    melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
-    criterios_melhores = {
-        "ATAQUE": (-1.0, -1, -1),
-        "MEIO": (-1.0, -1, -1),
-        "DEFESA": (-1.0, -1, -1),
-        "GOLEIRO": (-1.0, -1, -1),
-    }
+    """Calcula o melhor jogador de cada categoria usando a média da posição."""
+    melhores = {cat: None for cat in ORDEM_CATEGORIAS_MELHORES}
+    criterios_melhores = {cat: (-1.0, -1, -1) for cat in ORDEM_CATEGORIAS_MELHORES}
 
     consolidados = consolidar_jogadores(jogadores)
 
@@ -227,7 +226,7 @@ def calcular_selecao_semana(jogadores):
             if partidas <= 0:
                 continue
             media_pos = dados_pos.get("soma_notas", 0.0) / partidas
-            cat = setor_da_posicao(pos)
+            cat = categoria_da_posicao(pos)
             criterio_atual = (media_pos, partidas, total_gols + total_assists)
 
             if criterio_atual > criterios_melhores[cat]:
@@ -326,7 +325,7 @@ async def enviar_ranking_atualizado(canal_fallback=None):
 
     melhores = calcular_selecao_semana(jogadores)
     linhas_melhores = []
-    for cat in ["GOLEIRO", "DEFESA", "MEIO", "ATAQUE"]:
+    for cat in ORDEM_CATEGORIAS_MELHORES:
         dados_craque = melhores.get(cat)
         if dados_craque:
             nome, pos, media_pos, gols, assists, part = dados_craque
@@ -341,14 +340,15 @@ async def enviar_ranking_atualizado(canal_fallback=None):
         "🎮 **Partidas jogadas**\n"
         "⚽ **Gols**\n"
         "🎯 **Assistências**\n"
-        "Siglas: `ATD`/`ATE`/`ATA` (Ataque) • `MEI`/`ME`/`MD`/`MCE`/`MCD`/`VOL` (Meio) • `ZAG`/`ZGE`/`ZGD`/`LAT`/`LE`/`LD`/`VLE`/`VLD` (Defesa) • `GL`/`GOL` (Goleiro)"
+        "Siglas: `ATD`/`ATE`/`ATA` (Ataque) • `MEI`/`ME`/`MD`/`MCD`/`MCE`/`ALA` (Meia) • "
+        "`VOL`/`VLD`/`VLE` (Volantes) • `ZAG`/`ZGE`/`ZGD`/`LAT`/`LE`/`LD` (Zagueiro) • `GL`/`GOL` (Goleiro)"
     )
 
     mensagens_enviadas = []
     try:
         total_mensagens = 1 + len(blocos_jogadores)
 
-        # Bloco 1: Melhores da Semana por Posição + Legenda dos Símbolos
+        # Bloco 1: Legenda no topo + Melhores da Semana por Posição
         titulo_bloco_1 = (
             "🏆 RANKING DA SEMANA — ROIPIAU FC"
             if total_mensagens == 1
@@ -358,14 +358,11 @@ async def enviar_ranking_atualizado(canal_fallback=None):
             title=titulo_bloco_1,
             description=(
                 f"Partidas computadas: `{dados_est.get('partidas_totais', 0)}`\n\n"
+                "📖 **LEGENDA DOS SÍMBOLOS**\n"
+                f"{legenda_simbolos}\n\n"
                 "🌟 **MELHORES DA SEMANA POR POSIÇÃO**\n" + "\n".join(linhas_melhores)
             ),
             color=discord.Color.gold()
-        )
-        embed_melhores.add_field(
-            name="📖 LEGENDA DOS SÍMBOLOS",
-            value=legenda_simbolos,
-            inline=False
         )
         embed_melhores.set_footer(text="RoiPau FC Bot • Atualiza automaticamente a cada partida e via !ranking ⚽🔥")
         msg_1 = await canal_destino.send(embed=embed_melhores)
@@ -415,8 +412,8 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Bloco 1 com Melhores e Legenda:** Melhores da semana por posição e legenda dos símbolos no primeiro bloco.\n"
-                        "• **Blocos Seguintes com Jogadores:** Lista completa de jogadores e suas notas nos blocos seguintes."
+                        "• **Legenda no Topo do Bloco 1:** Símbolos e posições exibidos logo no início do primeiro bloco.\n"
+                        "• **Categoria de Volantes e Ajustes de Siglas:** `VOL`/`VLD`/`VLE` em Volantes, `MEI`/`ME`/`MD`/`MCD`/`MCE`/`ALA` em Meia, `ZAG`/`ZGE`/`ZGD`/`LAT`/`LE`/`LD` em Zagueiro e `GL`/`GOL` em Goleiro."
                     )
                     await channel.send(changelog_msg)
 
@@ -471,7 +468,7 @@ async def on_message(message):
                     color=discord.Color.brand_green()
                 )
 
-                for cat in ["GOLEIRO", "DEFESA", "MEIO", "ATAQUE"]:
+                for cat in ORDEM_CATEGORIAS_MELHORES:
                     dados_craque = melhores.get(cat)
                     if dados_craque:
                         nome, pos, media, gols, assists, part = dados_craque
@@ -841,7 +838,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
-            "`!ranking`\n> Publica os melhores da semana e a legenda no 1º bloco e os demais jogadores nos blocos seguintes (também atualiza sozinho a cada partida).\n"
+            "`!ranking`\n> Publica a legenda e os melhores da semana no 1º bloco e os demais jogadores nos blocos seguintes (também atualiza sozinho a cada partida).\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
