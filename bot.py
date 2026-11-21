@@ -132,7 +132,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v5.1-DestaqueTopoListaGeral"
+VERSAO_ATUAL = "v5.2-LegendaRankingLimpa"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 ROTULOS_MELHOR = {
@@ -336,6 +336,14 @@ async def enviar_ranking_atualizado(canal_fallback=None):
         else:
             linhas_melhores.append(f"• {ROTULOS_MELHOR[cat]}: *A definir*")
 
+    legenda_simbolos = (
+        "⭐ **Nota / Média** (geral e por posição)\n"
+        "🎮 **Partidas jogadas**\n"
+        "⚽ **Gols**\n"
+        "🎯 **Assistências**\n"
+        "Siglas: `ATD`/`ATE`/`ATA` (Ataque) • `MEI`/`ME`/`MD`/`MCE`/`MCD`/`VOL` (Meio) • `ZAG`/`ZGE`/`ZGD`/`LAT`/`LE`/`LD`/`VLE`/`VLD` (Defesa) • `GL`/`GOL` (Goleiro)"
+    )
+
     mensagens_enviadas = []
     try:
         total_blocos = len(blocos_rank)
@@ -352,6 +360,12 @@ async def enviar_ranking_atualizado(canal_fallback=None):
                     0,
                     name="🌟 MELHORES DA SEMANA POR POSIÇÃO",
                     value="\n".join(linhas_melhores),
+                    inline=False
+                )
+            if idx == total_blocos:
+                embed.add_field(
+                    name="📖 LEGENDA DOS SÍMBOLOS",
+                    value=legenda_simbolos,
                     inline=False
                 )
             embed.set_footer(text="RoiPau FC Bot • Atualiza automaticamente a cada partida e via !ranking ⚽🔥")
@@ -391,9 +405,7 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Melhores da Semana em Destaque no Topo:** Melhor Goleiro, Melhor Zagueiro, Melhor Meia e Melhor Atacante.\n"
-                        "• **Lista Geral de Jogadores:** Todos os jogadores reunidos com nota, quantidade de partidas, gols e assistências.\n"
-                        "• **Legenda Completa na Lista:** Cabeçalho completo mantido a cada atualização."
+                        "• **Legenda dos Símbolos no Ranking:** Explicação de ⭐, 🎮, ⚽, 🎯 e posições diretamente na página do ranking semanal."
                     )
                     await channel.send(changelog_msg)
 
@@ -595,26 +607,14 @@ def jogador_ja_esta_na_lista(titulares, reservas, target_id):
     return any(extrair_id(item['user']) == target_id for item in titulares) or any(extrair_id(item['user']) == target_id for item in reservas)
 
 def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos=2):
-    esquema_limpo = str(esquema or "352").strip()
-    categoria_limpa = str(categoria or "geral").strip()
-    titulo_limpo = str(titulo or "CONVOCAÇÃO").strip()
-
-    legenda_topo = (
-        f"⚽ **Formação:** `{esquema_limpo}` (11 por time) | "
-        f"🎯 **Foco:** `{categoria_limpa}` | "
-        f"🛡️ **Times Ativos:** `{qtd_times_ativos}` (Máx: 4)\n"
-        f"👥 **Titulares:** `{len(titulares)}` | "
-        f"⏳ **Reservas:** `{len(reservas)}`\n\u200b"
-    )
-
     embed = discord.Embed(
-        title=f"📋 {titulo_limpo.upper()}",
-        description=legenda_topo,
+        title=f"📋 {titulo.upper()}",
+        description=f"⚽ **Formação:** `{esquema}` (11 por time) | **Foco:** `{categoria}` | 🛡️ **Times Ativos:** `{qtd_times_ativos}` (Máx: 4)\n👥 **Titulares:** `{len(titulares)}` | ⏳ **Reservas:** `{len(reservas)}`\n\u200b",
         color=discord.Color.green()
     )
 
     val_capitaes_list = []
-    capitaes_int = {int(k): v for k, v in (capitaes or {}).items()}
+    capitaes_int = {int(k): v for k, v in capitaes.items()}
     for i in range(qtd_times_ativos):
         nome_t = NOMES_TIMES[i]
         cap = capitaes_int.get(i) or "*A definir (clique no botão)*"
@@ -624,7 +624,7 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
     embed.add_field(name="⭐ CAPITÃES", value="\n".join(val_capitaes_list), inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
-    config_formacao = FORMAGOES.get(esquema_limpo, FORMAGOES["352"])
+    config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
     linhas_vagas = []
 
     for pos, qtd_por_time in config_formacao.items():
@@ -797,9 +797,8 @@ class ListaButtonsDinamica(discord.ui.View):
             dados["capitaes"],
             dados["qtd_times_ativos"]
         )
-        view_atualizada = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
 
-        await interaction.response.edit_message(embed=novo_embed, view=view_atualizada)
+        await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
         return True
 
 @bot.command(name="comandos")
@@ -923,6 +922,7 @@ async def reabrir_lista(ctx):
 
     dados_alvo["fechada"] = False
     nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
+    dados_alvo["view"] = nova_view
 
     channel = await obter_canal(dados_alvo["channel_id"])
 
@@ -1060,6 +1060,7 @@ async def criar_lista(ctx, *, args):
             "capitaes": capitaes,
             "channel_id": ctx.channel.id,
             "fechada": False,
+            "view": view,
             "qtd_times_ativos": qtd_times_ativos
         }
         salvar_listas()
@@ -1096,6 +1097,7 @@ async def limpar(ctx):
     salvar_listas()
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=2)
+    dados["view"] = nova_view
 
     channel = await obter_canal(dados["channel_id"])
     try:
@@ -1175,8 +1177,7 @@ async def simular(ctx, quantidade: int):
             dados["titulo"], dados["esquema"], dados["categoria"],
             dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
         )
-        view_atual = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
-        await msg.edit(embed=novo_embed, view=view_atual)
+        await msg.edit(embed=novo_embed, view=dados.get("view"))
     except Exception:
         pass
 
@@ -1234,6 +1235,7 @@ async def addtime(ctx, numero_time: int):
     dados["reservas"] = novos_reservas
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
+    dados["view"] = nova_view
     salvar_listas()
 
     channel = await obter_canal(dados["channel_id"])
@@ -1311,8 +1313,7 @@ async def remover(ctx, member: discord.Member = None):
     try:
         msg = await channel.fetch_message(msg_id)
         novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"])
-        view_atual = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
-        await msg.edit(embed=novo_embed, view=view_atual)
+        await msg.edit(embed=novo_embed, view=dados.get("view"))
     except Exception:
         pass
 
