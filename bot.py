@@ -132,15 +132,14 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v4.8-GruposPorSetor"
+VERSAO_ATUAL = "v5.1-DestaqueTopoListaGeral"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
-ORDEM_SETORES = ["ATAQUE", "MEIO", "DEFESA", "GOLEIRO"]
-TITULOS_SETORES = {
-    "ATAQUE": "🎯 ATACANTES",
-    "MEIO": "⚙️ MEIAS",
-    "DEFESA": "🛡️ DEFESA",
-    "GOLEIRO": "🧤 GOLEIROS",
+ROTULOS_MELHOR = {
+    "GOLEIRO": "🧤 Melhor Goleiro",
+    "DEFESA": "🛡️ Melhor Zagueiro",
+    "MEIO": "⚙️ Melhor Meia",
+    "ATAQUE": "🎯 Melhor Atacante",
 }
 
 async def obter_canal(canal_id):
@@ -206,9 +205,14 @@ def consolidar_jogadores(jogadores):
     return consolidados
 
 def calcular_selecao_semana(jogadores):
-    """Calcula destaques por setor usando a média específica de cada posição."""
+    """Calcula o melhor jogador de cada posição/setor usando a média da posição."""
     melhores = {"ATAQUE": None, "MEIO": None, "DEFESA": None, "GOLEIRO": None}
-    notas_melhores = {"ATAQUE": -1.0, "MEIO": -1.0, "DEFESA": -1.0, "GOLEIRO": -1.0}
+    criterios_melhores = {
+        "ATAQUE": (-1.0, -1, -1),
+        "MEIO": (-1.0, -1, -1),
+        "DEFESA": (-1.0, -1, -1),
+        "GOLEIRO": (-1.0, -1, -1),
+    }
 
     consolidados = consolidar_jogadores(jogadores)
 
@@ -224,9 +228,10 @@ def calcular_selecao_semana(jogadores):
                 continue
             media_pos = dados_pos.get("soma_notas", 0.0) / partidas
             cat = setor_da_posicao(pos)
+            criterio_atual = (media_pos, partidas, total_gols + total_assists)
 
-            if media_pos > notas_melhores[cat]:
-                notas_melhores[cat] = media_pos
+            if criterio_atual > criterios_melhores[cat]:
+                criterios_melhores[cat] = criterio_atual
                 melhores[cat] = (
                     nome,
                     pos,
@@ -238,19 +243,18 @@ def calcular_selecao_semana(jogadores):
 
     return melhores
 
-def montar_grupos_ranking(jogadores):
-    """Agrupa jogadores por setor (Atacante, Meio, Defesa, Goleiro), mantendo notas por posição."""
+def montar_lista_geral_ranking(jogadores):
+    """Monta a lista única com todos os jogadores, nota e quantidade de partidas."""
     consolidados = consolidar_jogadores(jogadores)
-    grupos = {setor: [] for setor in ORDEM_SETORES}
+    itens = []
 
     for _, info in consolidados.items():
         nome = info["nome"]
         total_partidas = 0
         total_gols = 0
         total_assists = 0
+        soma_notas_geral = 0.0
         medias_por_pos = []
-        partidas_por_setor = {setor: 0 for setor in ORDEM_SETORES}
-        melhor_nota_por_setor = {setor: -1.0 for setor in ORDEM_SETORES}
 
         for pos, d in info.get("posicoes", {}).items():
             part = d.get("partidas", 0)
@@ -258,77 +262,46 @@ def montar_grupos_ranking(jogadores):
                 total_partidas += part
                 total_gols += d.get("gols", 0)
                 total_assists += d.get("assistencias", 0)
+                soma_notas_geral += d.get("soma_notas", 0.0)
                 media_pos = d.get("soma_notas", 0.0) / part
-                setor = setor_da_posicao(pos)
-
-                partidas_por_setor[setor] += part
-                if media_pos > melhor_nota_por_setor[setor]:
-                    melhor_nota_por_setor[setor] = media_pos
-
                 medias_por_pos.append((media_pos, part, f"`{pos}` ⭐ **{media_pos:.2f}**"))
 
         if total_partidas > 0:
+            media_geral = soma_notas_geral / total_partidas
             medias_por_pos.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            setor_principal = max(
-                ORDEM_SETORES,
-                key=lambda s: (partidas_por_setor[s], melhor_nota_por_setor[s])
+            notas_str = " | ".join([item[2] for item in medias_por_pos])
+            linha = (
+                f"• **{nome}** — ⭐ **{media_geral:.2f}** | 🎮 `{total_partidas}` | "
+                f"⚽ `{total_gols}` | 🎯 `{total_assists}` • {notas_str}"
             )
-            nota_ref = melhor_nota_por_setor[setor_principal] if melhor_nota_por_setor[setor_principal] >= 0 else medias_por_pos[0][0]
-            notas_pos_str = " | ".join([item[2] for item in medias_por_pos])
+            itens.append(((media_geral, total_partidas, total_gols), linha))
 
-            linha = f"• **{nome}** — ⚽ `{total_gols}` | 🎯 `{total_assists}` | 🎮 `{total_partidas}` • {notas_pos_str}"
-            grupos[setor_principal].append(((nota_ref, total_gols, total_assists), linha))
+    itens.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in itens]
 
-    for setor in ORDEM_SETORES:
-        grupos[setor].sort(key=lambda x: x[0], reverse=True)
+def dividir_linhas_em_blocos(linhas, max_chars=3400):
+    """Divide a lista geral de jogadores em blocos respeitando o limite de caracteres do Discord."""
+    if not linhas:
+        return []
 
-    return grupos
+    blocos = []
+    atual = []
+    chars_atual = 0
 
-def montar_blocos_por_grupo(grupos, max_chars=3400):
-    """Cria blocos de texto separados por grupo sem ultrapassar o limite do Discord."""
-    secoes = []
-    for setor in ORDEM_SETORES:
-        itens = [item[1] for item in grupos[setor]]
-        if not itens:
-            continue
-
-        titulo_grupo = TITULOS_SETORES[setor]
-        blocos_setor = []
-        atual = [titulo_grupo]
-        chars_atual = len(titulo_grupo) + 1
-
-        for linha in itens:
-            tam = len(linha) + 1
-            if len(atual) > 1 and chars_atual + tam > max_chars:
-                blocos_setor.append("\n".join(atual))
-                atual = [f"{titulo_grupo} (cont.)", linha]
-                chars_atual = len(atual[0]) + 1 + tam
-            else:
-                atual.append(linha)
-                chars_atual += tam
-
-        if atual:
-            blocos_setor.append("\n".join(atual))
-
-        for b in blocos_setor:
-            secoes.append(b)
-
-    # Junta seções curtas num mesmo bloco quando couberem dentro do limite
-    blocos_finais = []
-    bloco_atual = ""
-    for secao in secoes:
-        if not bloco_atual:
-            bloco_atual = secao
-        elif len(bloco_atual) + len(secao) + 4 <= max_chars:
-            bloco_atual = f"{bloco_atual}\n\n{secao}"
+    for linha in linhas:
+        tam = len(linha) + 1
+        if atual and chars_atual + tam > max_chars:
+            blocos.append("\n".join(atual))
+            atual = [linha]
+            chars_atual = tam
         else:
-            blocos_finais.append(bloco_atual)
-            bloco_atual = secao
+            atual.append(linha)
+            chars_atual += tam
 
-    if bloco_atual:
-        blocos_finais.append(bloco_atual)
+    if atual:
+        blocos.append("\n".join(atual))
 
-    return blocos_finais
+    return blocos
 
 async def enviar_ranking_atualizado(canal_fallback=None):
     dados_est = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
@@ -345,22 +318,23 @@ async def enviar_ranking_atualizado(canal_fallback=None):
         print("⚠️ Canal de ranking não encontrado para envio.")
         return False
 
-    grupos = montar_grupos_ranking(jogadores)
-    blocos_rank = montar_blocos_por_grupo(grupos, max_chars=3400)
+    linhas_gerais = montar_lista_geral_ranking(jogadores)
+    blocos_rank = dividir_linhas_em_blocos(linhas_gerais, max_chars=3400)
 
     if not blocos_rank:
         return False
 
     melhores = calcular_selecao_semana(jogadores)
-    emojis_cat = {"ATAQUE": "🎯", "MEIO": "⚙️", "DEFESA": "🛡️", "GOLEIRO": "🧤"}
-    linhas_destaques = []
-    for cat in ["ATAQUE", "MEIO", "DEFESA", "GOLEIRO"]:
+    linhas_melhores = []
+    for cat in ["GOLEIRO", "DEFESA", "MEIO", "ATAQUE"]:
         dados_craque = melhores.get(cat)
         if dados_craque:
             nome, pos, media_pos, gols, assists, part = dados_craque
-            linhas_destaques.append(
-                f"• {emojis_cat[cat]} **{cat.capitalize()}:** **{nome}** (`{pos}`) — ⭐ **{media_pos:.2f}** | ⚽ `{gols}` | 🎯 `{assists}` | 🎮 `{part}`"
+            linhas_melhores.append(
+                f"• {ROTULOS_MELHOR[cat]}: **{nome}** (`{pos}`) — ⭐ **{media_pos:.2f}** | 🎮 `{part}` | ⚽ `{gols}` | 🎯 `{assists}`"
             )
+        else:
+            linhas_melhores.append(f"• {ROTULOS_MELHOR[cat]}: *A definir*")
 
     mensagens_enviadas = []
     try:
@@ -373,10 +347,11 @@ async def enviar_ranking_atualizado(canal_fallback=None):
                 description=cabecalho + bloco,
                 color=discord.Color.gold()
             )
-            if idx == total_blocos and linhas_destaques:
-                embed.add_field(
-                    name="🌟 SELEÇÃO DA SEMANA (DESTAQUES)",
-                    value="\n".join(linhas_destaques),
+            if idx == 1 and linhas_melhores:
+                embed.insert_field_at(
+                    0,
+                    name="🌟 MELHORES DA SEMANA POR POSIÇÃO",
+                    value="\n".join(linhas_melhores),
                     inline=False
                 )
             embed.set_footer(text="RoiPau FC Bot • Atualiza automaticamente a cada partida e via !ranking ⚽🔥")
@@ -416,7 +391,9 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Grupos no Ranking Semanal:** Atacantes, Meias, Defesa e Goleiros separados por setor, com gols, assistências e jogos somados e notas por posição."
+                        "• **Melhores da Semana em Destaque no Topo:** Melhor Goleiro, Melhor Zagueiro, Melhor Meia e Melhor Atacante.\n"
+                        "• **Lista Geral de Jogadores:** Todos os jogadores reunidos com nota, quantidade de partidas, gols e assistências.\n"
+                        "• **Legenda Completa na Lista:** Cabeçalho completo mantido a cada atualização."
                     )
                     await channel.send(changelog_msg)
 
@@ -471,15 +448,15 @@ async def on_message(message):
                     color=discord.Color.brand_green()
                 )
 
-                emojis_cat = {"ATAQUE": "🎯", "MEIO": "⚙️", "DEFESA": "🛡️", "GOLEIRO": "🧤"}
-                for cat, dados_craque in melhores.items():
+                for cat in ["GOLEIRO", "DEFESA", "MEIO", "ATAQUE"]:
+                    dados_craque = melhores.get(cat)
                     if dados_craque:
                         nome, pos, media, gols, assists, part = dados_craque
                         txt_craque = (
                             f"👑 **{nome}** (`{pos}`)\n"
-                            f"⭐ Média: **{media:.2f}** | ⚽ Gols: `{gols}` | 🎯 Assists: `{assists}` | 🎮 Jogos: `{part}`"
+                            f"⭐ Média: **{media:.2f}** | 🎮 Jogos: `{part}` | ⚽ Gols: `{gols}` | 🎯 Assists: `{assists}`"
                         )
-                        embed_rel.add_field(name=f"{emojis_cat[cat]} Craque do {cat}", value=txt_craque, inline=False)
+                        embed_rel.add_field(name=ROTULOS_MELHOR[cat], value=txt_craque, inline=False)
 
                 embed_rel.set_footer(text="RoiPau FC • O ciclo semanal foi encerrado e zerado para a próxima temporada! ⚽🔥")
                 await canal_ranking.send(embed=embed_rel)
@@ -618,14 +595,26 @@ def jogador_ja_esta_na_lista(titulares, reservas, target_id):
     return any(extrair_id(item['user']) == target_id for item in titulares) or any(extrair_id(item['user']) == target_id for item in reservas)
 
 def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capitaes, qtd_times_ativos=2):
+    esquema_limpo = str(esquema or "352").strip()
+    categoria_limpa = str(categoria or "geral").strip()
+    titulo_limpo = str(titulo or "CONVOCAÇÃO").strip()
+
+    legenda_topo = (
+        f"⚽ **Formação:** `{esquema_limpo}` (11 por time) | "
+        f"🎯 **Foco:** `{categoria_limpa}` | "
+        f"🛡️ **Times Ativos:** `{qtd_times_ativos}` (Máx: 4)\n"
+        f"👥 **Titulares:** `{len(titulares)}` | "
+        f"⏳ **Reservas:** `{len(reservas)}`\n\u200b"
+    )
+
     embed = discord.Embed(
-        title=f"📋 {titulo.upper()}",
-        description=f"⚽ **Formação:** `{esquema}` (11 por time) | **Foco:** `{categoria}` | 🛡️ **Times Ativos:** `{qtd_times_ativos}` (Máx: 4)\n👥 **Titulares:** `{len(titulares)}` | ⏳ **Reservas:** `{len(reservas)}`\n\u200b",
+        title=f"📋 {titulo_limpo.upper()}",
+        description=legenda_topo,
         color=discord.Color.green()
     )
 
     val_capitaes_list = []
-    capitaes_int = {int(k): v for k, v in capitaes.items()}
+    capitaes_int = {int(k): v for k, v in (capitaes or {}).items()}
     for i in range(qtd_times_ativos):
         nome_t = NOMES_TIMES[i]
         cap = capitaes_int.get(i) or "*A definir (clique no botão)*"
@@ -635,7 +624,7 @@ def gerar_embed_dinamico(titulo, esquema, categoria, titulares, reservas, capita
     embed.add_field(name="⭐ CAPITÃES", value="\n".join(val_capitaes_list), inline=False)
     embed.add_field(name="\u200b", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
 
-    config_formacao = FORMAGOES.get(esquema, FORMAGOES["352"])
+    config_formacao = FORMAGOES.get(esquema_limpo, FORMAGOES["352"])
     linhas_vagas = []
 
     for pos, qtd_por_time in config_formacao.items():
@@ -808,8 +797,9 @@ class ListaButtonsDinamica(discord.ui.View):
             dados["capitaes"],
             dados["qtd_times_ativos"]
         )
+        view_atualizada = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
 
-        await interaction.response.edit_message(embed=novo_embed, view=dados["view"])
+        await interaction.response.edit_message(embed=novo_embed, view=view_atualizada)
         return True
 
 @bot.command(name="comandos")
@@ -841,7 +831,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
-            "`!ranking`\n> Publica o ranking atualizado e a Seleção da Semana no canal de melhores da semana (também atualiza sozinho a cada partida).\n"
+            "`!ranking`\n> Publica os melhores da semana por posição no topo e a lista geral com notas e partidas (também atualiza sozinho a cada partida).\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
@@ -933,7 +923,6 @@ async def reabrir_lista(ctx):
 
     dados_alvo["fechada"] = False
     nova_view = ListaButtonsDinamica(dados_alvo["esquema"], qtd_times=dados_alvo["qtd_times_ativos"])
-    dados_alvo["view"] = nova_view
 
     channel = await obter_canal(dados_alvo["channel_id"])
 
@@ -1035,7 +1024,7 @@ async def ranking_cmd(ctx):
 
     enviou = await enviar_ranking_atualizado(canal_fallback=ctx.channel)
     if enviou:
-        await ctx.send("✅ Ranking e Seleção da Semana enviados com sucesso!", delete_after=8)
+        await ctx.send("✅ Ranking enviado com sucesso!", delete_after=8)
     else:
         await ctx.send("⚠️ Não foi possível enviar o ranking agora.", delete_after=10)
 
@@ -1071,7 +1060,6 @@ async def criar_lista(ctx, *, args):
             "capitaes": capitaes,
             "channel_id": ctx.channel.id,
             "fechada": False,
-            "view": view,
             "qtd_times_ativos": qtd_times_ativos
         }
         salvar_listas()
@@ -1108,7 +1096,6 @@ async def limpar(ctx):
     salvar_listas()
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=2)
-    dados["view"] = nova_view
 
     channel = await obter_canal(dados["channel_id"])
     try:
@@ -1188,7 +1175,8 @@ async def simular(ctx, quantidade: int):
             dados["titulo"], dados["esquema"], dados["categoria"],
             dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"]
         )
-        await msg.edit(embed=novo_embed, view=dados.get("view"))
+        view_atual = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
+        await msg.edit(embed=novo_embed, view=view_atual)
     except Exception:
         pass
 
@@ -1246,7 +1234,6 @@ async def addtime(ctx, numero_time: int):
     dados["reservas"] = novos_reservas
 
     nova_view = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
-    dados["view"] = nova_view
     salvar_listas()
 
     channel = await obter_canal(dados["channel_id"])
@@ -1324,7 +1311,8 @@ async def remover(ctx, member: discord.Member = None):
     try:
         msg = await channel.fetch_message(msg_id)
         novo_embed = gerar_embed_dinamico(dados["titulo"], dados["esquema"], dados["categoria"], dados["titulares"], dados["reservas"], dados["capitaes"], dados["qtd_times_ativos"])
-        await msg.edit(embed=novo_embed, view=dados.get("view"))
+        view_atual = ListaButtonsDinamica(dados["esquema"], qtd_times=dados["qtd_times_ativos"])
+        await msg.edit(embed=novo_embed, view=view_atual)
     except Exception:
         pass
 
