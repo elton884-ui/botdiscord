@@ -132,7 +132,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v5.2-LegendaRankingLimpa"
+VERSAO_ATUAL = "v5.4-LegendaNoBloco1"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 ROTULOS_MELHOR = {
@@ -319,9 +319,9 @@ async def enviar_ranking_atualizado(canal_fallback=None):
         return False
 
     linhas_gerais = montar_lista_geral_ranking(jogadores)
-    blocos_rank = dividir_linhas_em_blocos(linhas_gerais, max_chars=3400)
+    blocos_jogadores = dividir_linhas_em_blocos(linhas_gerais, max_chars=3400)
 
-    if not blocos_rank:
+    if not blocos_jogadores:
         return False
 
     melhores = calcular_selecao_semana(jogadores)
@@ -346,31 +346,41 @@ async def enviar_ranking_atualizado(canal_fallback=None):
 
     mensagens_enviadas = []
     try:
-        total_blocos = len(blocos_rank)
-        for idx, bloco in enumerate(blocos_rank, start=1):
-            titulo = "🏆 RANKING DA SEMANA — ROIPIAU FC" if total_blocos == 1 else f"🏆 RANKING DA SEMANA — ROIPIAU FC ({idx}/{total_blocos})"
-            cabecalho = f"Partidas computadas: `{dados_est.get('partidas_totais', 0)}`\n\n" if idx == 1 else ""
-            embed = discord.Embed(
-                title=titulo,
-                description=cabecalho + bloco,
+        total_mensagens = 1 + len(blocos_jogadores)
+
+        # Bloco 1: Melhores da Semana por Posição + Legenda dos Símbolos
+        titulo_bloco_1 = (
+            "🏆 RANKING DA SEMANA — ROIPIAU FC"
+            if total_mensagens == 1
+            else f"🏆 RANKING DA SEMANA — ROIPIAU FC (1/{total_mensagens})"
+        )
+        embed_melhores = discord.Embed(
+            title=titulo_bloco_1,
+            description=(
+                f"Partidas computadas: `{dados_est.get('partidas_totais', 0)}`\n\n"
+                "🌟 **MELHORES DA SEMANA POR POSIÇÃO**\n" + "\n".join(linhas_melhores)
+            ),
+            color=discord.Color.gold()
+        )
+        embed_melhores.add_field(
+            name="📖 LEGENDA DOS SÍMBOLOS",
+            value=legenda_simbolos,
+            inline=False
+        )
+        embed_melhores.set_footer(text="RoiPau FC Bot • Atualiza automaticamente a cada partida e via !ranking ⚽🔥")
+        msg_1 = await canal_destino.send(embed=embed_melhores)
+        mensagens_enviadas.append(msg_1.id)
+
+        # Blocos seguintes (2/3, 3/3...): Demais jogadores e suas notas
+        for idx_jog, bloco_jog in enumerate(blocos_jogadores, start=2):
+            embed_jog = discord.Embed(
+                title=f"🏆 RANKING DA SEMANA — ROIPIAU FC ({idx_jog}/{total_mensagens})",
+                description=f"📋 **JOGADORES E NOTAS**\n\n{bloco_jog}",
                 color=discord.Color.gold()
             )
-            if idx == 1 and linhas_melhores:
-                embed.insert_field_at(
-                    0,
-                    name="🌟 MELHORES DA SEMANA POR POSIÇÃO",
-                    value="\n".join(linhas_melhores),
-                    inline=False
-                )
-            if idx == total_blocos:
-                embed.add_field(
-                    name="📖 LEGENDA DOS SÍMBOLOS",
-                    value=legenda_simbolos,
-                    inline=False
-                )
-            embed.set_footer(text="RoiPau FC Bot • Atualiza automaticamente a cada partida e via !ranking ⚽🔥")
-            msg = await canal_destino.send(embed=embed)
-            mensagens_enviadas.append(msg.id)
+            embed_jog.set_footer(text="RoiPau FC Bot • Atualiza automaticamente a cada partida e via !ranking ⚽🔥")
+            msg_jog = await canal_destino.send(embed=embed_jog)
+            mensagens_enviadas.append(msg_jog.id)
 
         try:
             async for msg in canal_destino.history(limit=20):
@@ -405,7 +415,8 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Legenda dos Símbolos no Ranking:** Explicação de ⭐, 🎮, ⚽, 🎯 e posições diretamente na página do ranking semanal."
+                        "• **Bloco 1 com Melhores e Legenda:** Melhores da semana por posição e legenda dos símbolos no primeiro bloco.\n"
+                        "• **Blocos Seguintes com Jogadores:** Lista completa de jogadores e suas notas nos blocos seguintes."
                     )
                     await channel.send(changelog_msg)
 
@@ -830,7 +841,7 @@ async def comandos(ctx):
     embed.add_field(
         name="📊 Estatísticas & Relatório Semanal",
         value=(
-            "`!ranking`\n> Publica os melhores da semana por posição no topo e a lista geral com notas e partidas (também atualiza sozinho a cada partida).\n"
+            "`!ranking`\n> Publica os melhores da semana e a legenda no 1º bloco e os demais jogadores nos blocos seguintes (também atualiza sozinho a cada partida).\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
