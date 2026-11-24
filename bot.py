@@ -109,13 +109,35 @@ def carregar_dados_iniciais():
     except Exception:
         return {}
 
+def normalizar_estrutura_estats(dados):
+    if not isinstance(dados, dict):
+        dados = {}
+    jogadores = dados.get("jogadores")
+    if not isinstance(jogadores, dict):
+        jogadores = {}
+    partidas = dados.get("partidas")
+    if not isinstance(partidas, list):
+        partidas = []
+    partidas_totais = int(dados.get("partidas_totais", 0) or 0)
+    if partidas and partidas_totais < len(partidas):
+        partidas_totais = len(partidas)
+    return {
+        "jogadores": jogadores,
+        "partidas": partidas,
+        "partidas_totais": partidas_totais
+    }
+
 listas_ativas = carregar_dados_iniciais()
-estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+estatisticas_cla = normalizar_estrutura_estats(
+    carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+)
 
 def salvar_listas():
     salvar_no_db("listas_ativas", {str(k): v for k, v in listas_ativas.items()})
 
 def salvar_estats():
+    global estatisticas_cla
+    estatisticas_cla = normalizar_estrutura_estats(estatisticas_cla)
     salvar_no_db("estatisticas_cla", estatisticas_cla)
 
 # --- CONFIGURAÇÃO DO BOT DISCORD ---
@@ -132,7 +154,7 @@ CANAL_DADOS_FECHADO_ID = 1572265046002638878
 CANAL_RESULTADOS_ID = 1572265122066604212
 CANAL_MELHORES_SEMANA_ID = 1572363417606430861
 
-VERSAO_ATUAL = "v5.7-MultiBlocos8Jogadores"
+VERSAO_ATUAL = "v5.8-NumeroPartidasEApagar"
 ARQUIVO_VERSAO = "ultima_versao.txt"
 
 ORDEM_CATEGORIAS_MELHORES = ["GOLEIRO", "ZAGUEIRO", "VOLANTE", "MEIA", "ATAQUE"]
@@ -321,8 +343,109 @@ def dividir_linhas_em_blocos(linhas, max_chars=1400, max_linhas_por_bloco=8):
 
     return blocos
 
+def proximo_numero_partida(dados_est):
+    partidas = dados_est.get("partidas", [])
+    max_num = int(dados_est.get("partidas_totais", 0) or 0)
+    for p in partidas:
+        try:
+            num_p = int(p.get("numero", 0) or 0)
+            if num_p > max_num:
+                max_num = num_p
+        except Exception:
+            pass
+    return max_num + 1
+
+def registrar_lancamento_jogador(jogadores, nome_digitado, posicao, gols, assistencias, nota):
+    chave_existente = None
+    for k in jogadores.keys():
+        if k.strip().lower() == nome_digitado.lower():
+            chave_existente = k
+            break
+
+    nome_chave = chave_existente if chave_existente else nome_digitado
+    if nome_chave not in jogadores:
+        jogadores[nome_chave] = {"posicoes": {}}
+
+    if "posicoes" not in jogadores[nome_chave] or not isinstance(jogadores[nome_chave]["posicoes"], dict):
+        pos_antiga = str(jogadores[nome_chave].get("posicao", "MEI") or "MEI").upper()
+        jogadores[nome_chave]["posicoes"] = {
+            pos_antiga: {
+                "partidas": int(jogadores[nome_chave].get("partidas", 0) or 0),
+                "gols": int(jogadores[nome_chave].get("gols", 0) or 0),
+                "assistencias": int(jogadores[nome_chave].get("assistencias", 0) or 0),
+                "soma_notas": float(jogadores[nome_chave].get("soma_notas", 0.0) or 0.0)
+            }
+        }
+
+    posicoes_dict = jogadores[nome_chave]["posicoes"]
+    if posicao not in posicoes_dict:
+        posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
+
+    pos_atual = posicoes_dict[posicao]
+    pos_atual["partidas"] = int(pos_atual.get("partidas", 0) or 0) + 1
+    pos_atual["gols"] = int(pos_atual.get("gols", 0) or 0) + int(gols)
+    pos_atual["assistencias"] = int(pos_atual.get("assistencias", 0) or 0) + int(assistencias)
+    pos_atual["soma_notas"] = round(float(pos_atual.get("soma_notas", 0.0) or 0.0) + float(nota), 4)
+
+    return nome_chave
+
+def reverter_partida_no_db(dados_est, numero_partida):
+    """Remove os dados de uma partida específica pelo número e recalcula estatísticas."""
+    partidas = dados_est.get("partidas", [])
+    alvo_idx = None
+    partida_alvo = None
+
+    for idx, p in enumerate(partidas):
+        try:
+            if int(p.get("numero", -1)) == int(numero_partida):
+                alvo_idx = idx
+                partida_alvo = p
+                break
+        except Exception:
+            pass
+
+    if partida_alvo is None or alvo_idx is None:
+        return None
+
+    jogadores = dados_est.setdefault("jogadores", {})
+    for item in partida_alvo.get("jogadores", []):
+        nome = item.get("nome", "")
+        pos = str(item.get("posicao", "MEI")).upper()
+        gols = int(item.get("gols", 0) or 0)
+        assists = int(item.get("assistencias", 0) or 0)
+        nota = float(item.get("nota", 0.0) or 0.0)
+
+        chave_existente = None
+        for k in jogadores.keys():
+            if k.strip().lower() == str(nome).strip().lower():
+                chave_existente = k
+                break
+
+        if not chave_existente:
+            continue
+
+        pos_map = jogadores[chave_existente].get("posicoes", {})
+        if pos in pos_map:
+            d_pos = pos_map[pos]
+            d_pos["partidas"] = max(0, int(d_pos.get("partidas", 0) or 0) - 1)
+            d_pos["gols"] = max(0, int(d_pos.get("gols", 0) or 0) - gols)
+            d_pos["assistencias"] = max(0, int(d_pos.get("assistencias", 0) or 0) - assists)
+            d_pos["soma_notas"] = max(0.0, round(float(d_pos.get("soma_notas", 0.0) or 0.0) - nota, 4))
+
+            if d_pos["partidas"] == 0:
+                del pos_map[pos]
+
+        if not pos_map:
+            del jogadores[chave_existente]
+
+    partidas.pop(alvo_idx)
+    dados_est["partidas_totais"] = max(0, int(dados_est.get("partidas_totais", 0) or 0) - 1)
+    return partida_alvo
+
 async def enviar_ranking_atualizado(canal_fallback=None):
-    dados_est = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+    dados_est = normalizar_estrutura_estats(
+        carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+    )
     jogadores = dados_est.get("jogadores", {})
 
     if not jogadores:
@@ -438,8 +561,8 @@ async def on_ready():
                     changelog_msg = (
                         f"🚀 **RoiPau FC Bot atualizado com sucesso!** (Versão {VERSAO_ATUAL})\n\n"
                         "📋 **O que há de novo:**\n"
-                        "• **Divisão Automática em Mais Blocos:** Até 8 jogadores por bloco (`1/3`, `2/3`, `3/4`...) sem cortar linhas.\n"
-                        "• **Legenda no Topo do Bloco 1 + Melhores por Posição:** Inclui `VOL`/`VLD`/`VLE` em Volantes e mantém todos os inscritos com partidas."
+                        "• **Numeração de Partidas (`#1`, `#2`...):** Cada partida fica numerada no canal de resultados e salva no banco.\n"
+                        "• **Comando `!apagarpartida <número>`:** Desfaz uma partida duplicada ou lançada errado e atualiza o ranking automaticamente."
                     )
                     await channel.send(changelog_msg)
 
@@ -478,7 +601,9 @@ async def on_message(message):
 
         if conteudo.lower() == "!relatoriodasemana":
             global estatisticas_cla
-            estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+            estatisticas_cla = normalizar_estrutura_estats(
+                carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+            )
             jogadores = estatisticas_cla.get("jogadores", {})
             if not jogadores:
                 await message.channel.send("⚠️ Não há dados estatísticos registrados para gerar o relatório!", delete_after=10)
@@ -507,19 +632,24 @@ async def on_message(message):
                 embed_rel.set_footer(text="RoiPau FC • O ciclo semanal foi encerrado e zerado para a próxima temporada! ⚽🔥")
                 await canal_ranking.send(embed=embed_rel)
 
-            estatisticas_cla["jogadores"] = {}
-            estatisticas_cla["partidas_totais"] = 0
+            estatisticas_cla = {"jogadores": {}, "partidas": [], "partidas_totais": 0}
             salvar_estats()
 
             await message.add_reaction("✅")
             await message.channel.send("🏆 **Relatório final gerado com sucesso!** O banco de dados estatístico foi zerado e está pronto para um novo ciclo.", delete_after=15)
             return
 
+        if conteudo.lower().startswith("!apagarpartida") or conteudo.lower() == "!partidas":
+            await bot.process_commands(message)
+            return
+
         linhas = conteudo.split("\n")
         jogadores_processados = []
         erros_linhas = []
 
-        estatisticas_cla = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+        estatisticas_cla = normalizar_estrutura_estats(
+            carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+        )
 
         for linha in linhas:
             if not linha.strip():
@@ -540,38 +670,7 @@ async def on_message(message):
                     nota = float(partes[4].replace(",", "."))
 
                     jogadores = estatisticas_cla.setdefault("jogadores", {})
-
-                    chave_existente = None
-                    for k in jogadores.keys():
-                        if k.strip().lower() == nome_digitado.lower():
-                            chave_existente = k
-                            break
-
-                    nome_chave = chave_existente if chave_existente else nome_digitado
-                    if nome_chave not in jogadores:
-                        jogadores[nome_chave] = {"posicoes": {}}
-
-                    if "posicoes" not in jogadores[nome_chave]:
-                        pos_antiga = jogadores[nome_chave].get("posicao", "MEI")
-                        jogadores[nome_chave]["posicoes"] = {
-                            pos_antiga: {
-                                "partidas": jogadores[nome_chave].get("partidas", 0),
-                                "gols": jogadores[nome_chave].get("gols", 0),
-                                "assistencias": jogadores[nome_chave].get("assistencias", 0),
-                                "soma_notas": jogadores[nome_chave].get("soma_notas", 0.0)
-                            }
-                        }
-
-                    posicoes_dict = jogadores[nome_chave]["posicoes"]
-                    if posicao not in posicoes_dict:
-                        posicoes_dict[posicao] = {"partidas": 0, "gols": 0, "assistencias": 0, "soma_notas": 0.0}
-
-                    pos_Atual = posicoes_dict[posicao]
-                    pos_Atual["partidas"] += 1
-                    pos_Atual["gols"] += gols
-                    pos_Atual["assistencias"] += assistencias
-                    pos_Atual["soma_notas"] += nota
-
+                    nome_chave = registrar_lancamento_jogador(jogadores, nome_digitado, posicao, gols, assistencias, nota)
                     jogadores_processados.append((nome_chave, posicao, gols, assistencias, nota))
                 except Exception:
                     erros_linhas.append(linha)
@@ -589,17 +688,39 @@ async def on_message(message):
             return
 
         if jogadores_processados:
-            estatisticas_cla["partidas_totais"] += 1
-            salvar_estats()
+            num_partida = proximo_numero_partida(estatisticas_cla)
+            msg_res_id = None
 
             canal_res = await obter_canal(CANAL_RESULTADOS_ID)
             if canal_res:
-                embed_res = discord.Embed(title="📊 Resultado da Partida — RoiPau FC", color=discord.Color.green())
+                embed_res = discord.Embed(
+                    title=f"📊 Resultado da Partida #{num_partida} — RoiPau FC",
+                    color=discord.Color.green()
+                )
                 resumo_txt = []
                 for jp in jogadores_processados:
                     resumo_txt.append(f"• **{jp[0]}** (`{jp[1]}`) — ⭐ {jp[4]} | ⚽ {jp[2]} | 🎯 {jp[3]}")
-                embed_res.add_field(name="Destaques do Jogo", value="\n".join(resumo_txt), inline=False)
-                await canal_res.send(embed=embed_res)
+                embed_res.add_field(name=f"Destaques do Jogo — Partida #{num_partida}", value="\n".join(resumo_txt), inline=False)
+                embed_res.set_footer(text=f"Partida #{num_partida} • Para desfazer use !apagarpartida {num_partida}")
+                msg_res = await canal_res.send(embed=embed_res)
+                msg_res_id = msg_res.id
+
+            estatisticas_cla.setdefault("partidas", []).append({
+                "numero": num_partida,
+                "msg_resultado_id": msg_res_id,
+                "jogadores": [
+                    {
+                        "nome": jp[0],
+                        "posicao": jp[1],
+                        "gols": jp[2],
+                        "assistencias": jp[3],
+                        "nota": jp[4]
+                    }
+                    for jp in jogadores_processados
+                ]
+            })
+            estatisticas_cla["partidas_totais"] = int(estatisticas_cla.get("partidas_totais", 0) or 0) + 1
+            salvar_estats()
 
             await enviar_ranking_atualizado()
             await message.add_reaction("✅")
@@ -862,9 +983,11 @@ async def comandos(ctx):
     )
 
     embed.add_field(
-        name="📊 Estatísticas & Relatório Semanal",
+        name="📊 Estatísticas, Partidas & Relatório Semanal",
         value=(
             "`!ranking`\n> Publica a legenda e os melhores da semana no 1º bloco e os demais jogadores nos blocos seguintes (também atualiza sozinho a cada partida).\n"
+            "`!partidas`\n> Lista as partidas numeradas (`#1`, `#2`...) registradas no ciclo atual.\n"
+            "`!apagarpartida <número>`\n> Desfaz a partida informada (ex.: `!apagarpartida 9`), remove os dados dela e atualiza o ranking.\n"
             "`!relatoriodasemana` (No canal fechado de dados)\n> Gera o relatório final premiando os melhores de cada posição, publica no canal de melhores da semana e **zera o banco** para um novo ciclo!"
         ),
         inline=False
@@ -891,6 +1014,79 @@ async def comandos(ctx):
 
     embed.set_footer(text="RoiPau FC Bot • Gestão inteligente de elencos ⚽🔥")
     await ctx.send(embed=embed)
+
+@bot.command(name="partidas")
+async def listar_partidas(ctx):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    dados_est = normalizar_estrutura_estats(
+        carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+    )
+    partidas = dados_est.get("partidas", [])
+    if not partidas:
+        await ctx.send(
+            f"ℹ️ Total de partidas computadas: `{dados_est.get('partidas_totais', 0)}` (sem histórico detalhado anterior).",
+            delete_after=12
+        )
+        return
+
+    linhas = []
+    for p in partidas[-15:]:
+        num = p.get("numero", "?")
+        jog_p = p.get("jogadores", [])
+        gols_p = sum(int(j.get("gols", 0) or 0) for j in jog_p)
+        assists_p = sum(int(j.get("assistencias", 0) or 0) for j in jog_p)
+        linhas.append(f"• **Partida #{num}** — `{len(jog_p)}` jogadores | ⚽ `{gols_p}` | 🎯 `{assists_p}`")
+
+    embed = discord.Embed(
+        title="🗂️ PARTIDAS REGISTRADAS — ROIPIAU FC",
+        description="\n".join(linhas),
+        color=discord.Color.blurple()
+    )
+    embed.set_footer(text="Use !apagarpartida <número> para remover uma partida duplicada.")
+    await ctx.send(embed=embed, delete_after=25)
+
+@bot.command(name="apagarpartida")
+async def apagar_partida(ctx, numero: int = None):
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    if numero is None or numero <= 0:
+        await ctx.send("⚠️ **Uso correto:** `!apagarpartida <número>` (ex.: `!apagarpartida 9`)", delete_after=12)
+        return
+
+    global estatisticas_cla
+    estatisticas_cla = normalizar_estrutura_estats(
+        carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+    )
+
+    partida_removida = reverter_partida_no_db(estatisticas_cla, numero)
+    if not partida_removida:
+        await ctx.send(f"⚠️ Partida **#{numero}** não encontrada no histórico salvo!", delete_after=12)
+        return
+
+    salvar_estats()
+
+    msg_res_id = partida_removida.get("msg_resultado_id")
+    if msg_res_id:
+        canal_res = await obter_canal(CANAL_RESULTADOS_ID)
+        if canal_res:
+            try:
+                msg_res = await canal_res.fetch_message(int(msg_res_id))
+                await msg_res.delete()
+            except Exception:
+                pass
+
+    await enviar_ranking_atualizado()
+    await ctx.send(
+        f"🗑️ **Partida #{numero} apagada com sucesso!** Estatísticas revertidas e ranking atualizado.",
+        delete_after=15
+    )
 
 @bot.command(name="listasativas", aliases=["ativas"])
 async def listas_ativas_cmd(ctx):
@@ -1031,7 +1227,9 @@ async def teste(ctx):
         pass
 
     ping_ms = round(bot.latency * 1000)
-    est_db = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+    est_db = normalizar_estrutura_estats(
+        carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+    )
 
     feedback_msg = (
         "🤖 **DIAGNÓSTICO E TESTE DO BOT ROIPIAU (NUVEM)** ⚽\n\n"
@@ -1039,7 +1237,7 @@ async def teste(ctx):
         f"⚡ **Latência (Ping):** `{ping_ms}ms`\n"
         f"📋 **Listas Ativas Salvas:** `{len(listas_ativas)}`\n"
         f"📊 **Partidas Registradas no Banco (Nuvem):** `{est_db.get('partidas_totais', 0)}`\n"
-        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!ranking`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
+        f"🔒 **Comandos:** `!comandos`, `!listasativas`, `!reabrir`, `!limparmortas`, `!criarlista`, `!limpar`, `!simular`, `!addtime`, `!fecharlista`, `!remover`, `!ranking`, `!partidas`, `!apagarpartida`, `!relatoriodasemana`, `!teste` — **Tudo OK!**"
     )
 
     await ctx.send(feedback_msg, delete_after=15)
@@ -1051,7 +1249,9 @@ async def ranking_cmd(ctx):
     except Exception:
         pass
 
-    dados_est = carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas_totais": 0})
+    dados_est = normalizar_estrutura_estats(
+        carregar_do_db("estatisticas_cla", {"jogadores": {}, "partidas": [], "partidas_totais": 0})
+    )
     if not dados_est.get("jogadores"):
         await ctx.send("⚠️ Ainda não há estatísticas salvas no banco.", delete_after=10)
         return
